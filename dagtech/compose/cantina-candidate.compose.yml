@@ -1,0 +1,232 @@
+# Cantina candidate compose (Phase B parallel deploy / Phase C cutover)
+# Hosts Jeremy v6.3.20 stack alongside the production stack with isolated
+# ports + network + cgroup. Used for the structured X100 rollout bench.
+#
+# Phase B (running): docker compose -p cantina-candidate up -d
+# Phase C cutover: JARVIS PUTs X100 pool slot 0 from 3336 -> 3346 and PUTs
+# /mcb/restart. cpu-miner stays disabled throughout the bench.
+#
+# Memory anchors:
+#  - excalibur_4lane_isolation (Lane 1 cores 0-7 for X100 stack)
+#  - x100_firmware_single_pool_only (one pool only, no failover entry)
+#  - hans_solo_pool_design (SOLO pool on UAE node-1)
+#  - x100_benchmark_and_design (100K BDAG/h at ~280 MH/s target)
+
+x-mining-logging: &mining-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
+x-bench-env: &bench-env
+  CANDIDATE_LABEL: cantina-bench-phase-b
+  COINBASE_ADDRESS: "0x6387C32ccDD60BfBa00EC70A67715Dcd52E8083f"
+
+# Phase B places the whole candidate in Lane 4 (cores 20-27, shared with
+# existing services) so it cannot starve X100 production in Lane 1.
+# Memory cap kept conservative.
+x-lane4: &lane4
+  cpuset: "20,21,22,23,24,25,26,27"
+  mem_limit: 6g
+  mem_reservation: 2g
+  oom_score_adj: 100   # candidate dies before any prod service
+
+# Phase C cutover REPLACES x-lane4 with x-lane1 (manual edit / overlay file)
+# x-lane1: &lane1
+#   cpuset: "0,1,2,3,4,5,6,7"
+#   mem_limit: 12g
+#   mem_reservation: 8g
+#   oom_score_adj: -900
+
+networks:
+  cantina-net:
+    name: dagtech-pool-stack-net
+    driver: bridge
+
+volumes:
+  cantina-postgres-data:
+  cantina-node-data:
+  cantina-nodeworker-data:
+  cantina-collector-runtime:
+
+services:
+
+  cantina-pool-db:
+    image: postgres:15-alpine
+    container_name: cantina-pool-db
+    restart: unless-stopped
+    logging: *mining-logging
+    <<: *lane4
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - max_wal_size=1GB
+    environment:
+      POSTGRES_USER: bdag_pool
+      POSTGRES_PASSWORD: BdagPool2026xCantinaBench
+      POSTGRES_DB: pool
+    volumes:
+      - cantina-postgres-data:/var/lib/postgresql/data
+    networks: [cantina-net]
+
+  cantina-node:
+    # Jeremy's blockdag-node binary, vendored in repo bin/ release asset
+    # Image is built ad-hoc on first compose up via the Dockerfile in
+    # vendor/jeremy/v6.3.20/dockerfile, with bin/blockdag-node downloaded
+    # from the GitHub Release upstream-jeremy-v6.3.20-20260614.
+    image: dagtech-pool-stack/cantina-node:v6.3.20
+    container_name: cantina-node
+    restart: unless-stopped
+    logging: *mining-logging
+    <<: *lane4
+    environment:
+      <<: *bench-env
+      NODE_MODE: pool-attached
+      BDAG_RPC_PORT: "38132"
+      EVM_HTTP_PORT: "18555"
+      EVM_WS_PORT: "18556"
+      P2P_PORT: "8160"
+      NODE_METRICS_PORT: "6065"
+      BDAG_CHAIN_DATA_DIR: /data/mainnet
+    ports:
+      - "127.0.0.1:38132:38132"
+      - "127.0.0.1:18555:18555"
+      - "127.0.0.1:18556:18556"
+      - "0.0.0.0:8160:8160"
+    volumes:
+      - cantina-node-data:/data
+      # Phase B: chain data pre-seeded from a hot-rsync of prod node-1 at
+      # bench start. See rsync-node1-to-cantina.sh in dagtech/scripts/.
+    networks: [cantina-net]
+
+  cantina-pool:
+    # Jeremy's mining-pool binary — THE thing we're benching.
+    image: dagtech-pool-stack/cantina-pool:v6.3.20
+    container_name: cantina-pool
+    restart: unless-stopped
+    logging: *mining-logging
+    <<: *lane4
+    environment:
+      <<: *bench-env
+      POOL_BIND_PORT: "3344"
+      POOL_API_PORT: "9282"
+      NODE_RPC_URL: http://cantina-node:38132
+      WALLET_RPC_URL: http://cantina-node:18555
+      MINING_POOL_ADDRESS: "0x6387C32ccDD60BfBa00EC70A67715Dcd52E8083f"
+      POOL_COINBASE_ADDRESS: "0x6387C32ccDD60BfBa00EC70A67715Dcd52E8083f"
+      PG_URL: postgres://bdag_pool:BdagPool2026xCantinaBench@cantina-pool-db:5432/pool
+      POOL_STARTING_PDIFF: "8192"
+      POOL_FEE_PERCENTAGE: "0.0"
+    ports:
+      - "0.0.0.0:3344:3344"
+    networks: [cantina-net]
+    depends_on:
+      cantina-pool-db: { condition: service_started }
+      cantina-node: { condition: service_started }
+
+  cantina-hans-solo:
+    # Our existing hans-solo SOLO pool (separate container, our binary)
+    # bumped to candidate port 3346 so the X100 can be cut over to it.
+    # Pointed at cantina-node so we measure the new node + our pool combo.
+    image: bdag-release/asic-pool:local
+    container_name: cantina-hans-solo
+    restart: unless-stopped
+    logging: *mining-logging
+    <<: *lane4
+    environment:
+      POOL_PORT: 3346
+      MINING_ADDRESS: "0x6387C32ccDD60BfBa00EC70A67715Dcd52E8083f"
+      NODE_RPC_URL: http://cantina-node:38132
+      NODE_RPC_URLS: http://cantina-node:38132
+      NODE_RPC_USER: test
+      NODE_RPC_PASS: test
+      WALLET_RPC_URL: http://cantina-node:18555
+      WALLET_RPC_URLS: http://cantina-node:18555
+      POOL_RPC_ROUTER_ENABLED: "false"
+      POOL_RPC_ROUTER_FREEZE_FAILOVER_ENABLED: "false"
+      POOL_RPC_ROUTER_TEMPLATE_MAX_AGE_SECONDS: "90"
+      POOL_FEE_PERCENTAGE: "0.0"
+      POOL_STARTING_PDIFF: "1"
+      PG_URL: postgres://bdag_pool:BdagPool2026xCantinaBench@cantina-pool-db:5432/pool
+    ports:
+      - "0.0.0.0:3346:3346"
+    networks: [cantina-net]
+    depends_on:
+      cantina-pool-db: { condition: service_started }
+      cantina-node: { condition: service_started }
+
+  cantina-collector:
+    image: dagtech-pool-stack/cantina-collector:v6.3.20
+    container_name: cantina-collector
+    restart: unless-stopped
+    logging: *mining-logging
+    <<: *lane4
+    environment:
+      <<: *bench-env
+      COLLECTOR_HOST_PORT: "9285"
+      NODE_RPC_URL: http://cantina-node:38132
+      POOL_API_URL: http://cantina-pool:9282
+    volumes:
+      - cantina-collector-runtime:/runtime
+    networks: [cantina-net]
+
+  cantina-watchdog:
+    image: dagtech-pool-stack/cantina-watchdog:v6.3.20
+    container_name: cantina-watchdog
+    restart: unless-stopped
+    logging: *mining-logging
+    <<: *lane4
+    environment:
+      <<: *bench-env
+    networks: [cantina-net]
+    depends_on:
+      cantina-node: { condition: service_started }
+      cantina-pool: { condition: service_started }
+
+  cantina-sentinel:
+    image: dagtech-pool-stack/cantina-sentinel:v6.3.20
+    container_name: cantina-sentinel
+    restart: unless-stopped
+    logging: *mining-logging
+    <<: *lane4
+    environment:
+      <<: *bench-env
+    networks: [cantina-net]
+    depends_on:
+      cantina-node: { condition: service_started }
+
+  cantina-dashboard:
+    image: dagtech-pool-stack/cantina-dashboard:v6.3.20
+    container_name: cantina-dashboard
+    restart: unless-stopped
+    logging: *mining-logging
+    <<: *lane4
+    environment:
+      <<: *bench-env
+      DASHBOARD_BIND: 0.0.0.0
+      DASHBOARD_HOST_PORT: "9281"
+      DASHBOARD_LISTEN: "9281"
+      COLLECTOR_HOST_PORT: "9285"
+    ports:
+      - "0.0.0.0:9281:9281"
+    networks: [cantina-net]
+    depends_on:
+      cantina-collector: { condition: service_started }
+
+  # Decision #3: cpu-miner stays OFF for the entire bench window.
+  # Kept in compose so it's visible / documented. Profile gate prevents
+  # accidental start.
+  cantina-cpu-miner:
+    profiles: ["disabled"]
+    image: dagtech-pool-stack/cantina-cpu-miner:v6.3.20
+    container_name: cantina-cpu-miner
+    restart: "no"
+    environment:
+      MINING_POOL_ADDRESS: "0x6387C32ccDD60BfBa00EC70A67715Dcd52E8083f"
+      POOL_HOST: cantina-pool
+      POOL_PORT: "3344"
+    networks: [cantina-net]
