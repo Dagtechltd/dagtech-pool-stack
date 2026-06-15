@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paid Block Conversion Durable Fix Plan - 2026-05-30</title>
+  <script type="application/json" id="agent-metadata">
+  {
+    "document_type": "cross_repo_execution_plan",
+    "created_at_sast": "2026-05-30T18:14:00+02:00",
+    "session_identity": "Arkady-OfficePool-20260530T155129Z-f8cecc",
+    "source_rca": "/home/jeremy/blockdag-asic-pool/ops/runtime/reports/paid-block-conversion-architecture-rca-20260530.html",
+    "sdlc_backlog_item": "PVTI_lADODbdoIs4BXjCZzguQO_E",
+    "scope": "Durable cross-repo fix for converting ASIC hash power to confirmed paid on-chain block acceptance.",
+    "reviewers": ["R-Daneel corechain/protocol", "R-Giskard pool/Stratum", "R-Calvin SRE/release/QA", "R-Susan dashboard/operations"],
+    "secret_policy": "No secrets, private keys, tokens, or raw unredacted logs included."
+  }
+  </script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel2: #1f2937;
+      --line: #30363d;
+      --text: #e6edf3;
+      --muted: #a6b3c2;
+      --warn: #f2b94b;
+      --bad: #ff7b72;
+      --ok: #56d364;
+      --blue: #79c0ff;
+      --code: #d8f7ff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.56 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { max-width: 1180px; margin: 0 auto; padding: 30px 20px 60px; }
+    h1 { margin: 0 0 8px; font-size: 34px; line-height: 1.12; }
+    h2 { margin: 34px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+    h3 { margin: 22px 0 8px; }
+    p, li { color: var(--muted); }
+    li { margin: 6px 0; }
+    code { color: var(--code); background: #090d13; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; }
+    th, td { border: 1px solid var(--line); padding: 9px 10px; vertical-align: top; text-align: left; }
+    th { background: var(--panel2); color: var(--text); }
+    .lede { color: var(--text); font-size: 17px; max-width: 980px; }
+    .panel { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 14px; margin: 12px 0; }
+    .bad { color: var(--bad); } .warn { color: var(--warn); } .ok { color: var(--ok); } .blue { color: var(--blue); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Paid Block Conversion Durable Fix Plan</h1>
+  <p><strong>Created:</strong> 2026-05-30 18:14 SAST</p>
+  <p><strong>Goal:</strong> stop wasting ASIC hash power by making the stack prove that hash is becoming accepted, confirmed, paid on-chain blocks.</p>
+
+  <section>
+    <h2>Executive Plan</h2>
+    <p class="lede">
+      This is not a pool tuning task. The durable fix is a cross-repo program that moves mining-template validity and submit readiness into corechain, makes the pool consume that contract instead of guessing from local age/current-job/current-parent state, and makes dashboard, watchdog, release, and canary gates judge success by confirmed paid block conversion per active ASIC MAC-hour.
+    </p>
+    <div class="panel">
+      <strong class="bad">Blocking rule:</strong>
+      Do not build, ship, or deploy the current staged <code>blockdag-corechain</code> index until the staged regression is reviewed. The protocol review found staged changes that appear to remove recent-template submit replay, weaken zero-address rejection, remove default submit-obsolete-depth behavior, and stop comparing coinbase address in miner template equality.
+    </div>
+  </section>
+
+  <section>
+    <h2>Assumptions Audit</h2>
+    <table>
+      <thead><tr><th>Assumption</th><th>Status</th><th>Plan Response</th></tr></thead>
+      <tbody>
+        <tr><td>The ASIC private Ethernet/NAT link is the root cause.</td><td>Rejected by RCA and reviewers.</td><td>Keep router/DHCP hardening, but focus on template validity, submit readiness, local candidate drops, and chain confirmation.</td></tr>
+        <tr><td>Chain synced means mining ready.</td><td>False.</td><td>Add first-class paid mining state. Require template source readiness, accepted submits, or on-chain confirmation.</td></tr>
+        <tr><td>Accepted shares prove earning.</td><td>False.</td><td>Shares are connectivity and ASIC-work telemetry only. Paid health uses accepted submits and confirmed blue/payout-matched chain blocks.</td></tr>
+        <tr><td>A hard sub-second candidate age is safer on a roughly 1 second chain.</td><td>Unproven and currently harmful.</td><td>Pool wall-clock expiry becomes a backstop only. Corechain validity/expiry is authoritative.</td></tr>
+        <tr><td>Current parent mismatch always means unpaid.</td><td>Unsafe.</td><td>Corechain recent-template replay and obsolete-depth rules decide whether an old template remains submit-valid.</td></tr>
+        <tr><td>Dashboard overall ok is enough.</td><td>False.</td><td>Dashboard exposes separate <code>paid_mining_state</code> and blocks green mining status when paid conversion is degraded.</td></tr>
+        <tr><td>OfficePool is a good first development lab.</td><td>False.</td><td>Use source tests, offline replay, and a non-mining test host first. OfficePool is a late guarded canary.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Reviewer Synthesis</h2>
+    <table>
+      <thead><tr><th>Reviewer</th><th>Main Critique</th><th>Integrated Requirement</th></tr></thead>
+      <tbody>
+        <tr><td>R-Daneel, corechain/protocol</td><td><code>Seq</code> is not a durable work identity; current/staged corechain can reject valid old solved headers after a newer template.</td><td>Add <code>template_id</code>, immutable template cache, <code>SubmitBlockHeaderV3</code>, explicit submit-valid outcomes, and restore paid-conversion protections before new work.</td></tr>
+        <tr><td>R-Giskard, pool/Stratum</td><td>The pool currently discards paid work using local age, current-job, parent, and sequence heuristics.</td><td>Network-target candidates must not be locally dropped unless corechain says the template is invalid or the hash is objectively duplicate.</td></tr>
+        <tr><td>R-Calvin, SRE/release/QA</td><td>The fix will regress again unless releases are gated by paid conversion, pinned manifests, canary windows, and rollback rehearsal.</td><td>Add a paid-conversion harness and promotion gates based on confirmed-blue paid blocks per active MAC/X100 miner-hour.</td></tr>
+        <tr><td>R-Susan, dashboard/operations</td><td>Paid mining truth is currently a derived warning; fresh shares can still soften real unpaid mining states.</td><td>Add top-level <code>paid_mining_state</code>, split share activity from paid submit activity, and make watchdog repairs use paid evidence.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Target Contract</h2>
+    <p>The final system has one explicit contract: corechain owns mining work validity; the pool transports work and submits candidates; dashboard and release gates verify paid outcomes.</p>
+    <h3>Corechain Exposes</h3>
+    <ul>
+      <li><code>template_id</code>: stable identity for a built mining template, separate from stream sequence.</li>
+      <li><code>template_seq</code>: stream/order sequence only, not work identity.</li>
+      <li><code>issued_at_unix_ms</code>, <code>valid_until_unix_ms</code> or <code>valid_for_submit_ms</code> when authoritative.</li>
+      <li><code>template_parent_root</code>, parent set hash, height/order context, tx root, state root, coinbase address, pow type, version.</li>
+      <li><code>mineable_now</code>, <code>submit_ready</code>, <code>template_cached_usable</code>, <code>last_good_template_valid</code>, <code>submit_replay_available</code>.</li>
+      <li><code>invalidation_seq</code>, <code>invalidation_cause</code>, <code>submit_obsolete_height_limit</code>, and structured reason codes.</li>
+    </ul>
+    <h3>Pool Consumes</h3>
+    <ul>
+      <li>Each <code>JobData</code> stores corechain <code>template_id</code>, backend identity, validity fields, parent root, and issue time.</li>
+      <li>Block candidates submit with <code>template_id</code> to the issuing backend using V3 when available.</li>
+      <li>Local drops for <code>expired</code>, <code>stale-parent</code>, or <code>non_current_job</code> are forbidden for network-target candidates while corechain says the template is submit-valid.</li>
+      <li>When no valid template source exists, the pool pauses new work rather than feeding miners guessed work.</li>
+    </ul>
+    <h3>Operations Verifies</h3>
+    <ul>
+      <li>Paid health is based on accepted block submits and confirmed on-chain/blue/payout-matched blocks.</li>
+      <li>Shares are shown as ASIC connectivity and work telemetry only.</li>
+      <li>Release promotion fails if paid conversion is stale or unverifiable, even when containers are running and shares are flowing.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Step By Step Execution Plan</h2>
+
+    <h3>Phase 0: Freeze, Quarantine, And Baseline</h3>
+    <ol>
+      <li>Quarantine the staged <code>blockdag-corechain</code> changes. Do not build from that index. Review and either restore or explicitly justify any change affecting recent-template replay, zero-address rejection, coinbase comparison, and submit obsolete depth.</li>
+      <li>Create or link child SDLC issues under backlog item <code>PVTI_lADODbdoIs4BXjCZzguQO_E</code> for corechain, pool, dashboard, stack/release, and validation harness.</li>
+      <li>Capture a read-only OfficePool baseline: image digests, source SHAs, env, <code>.env</code>, systemd units, chain path, miner MACs, pool metrics, node health, dashboard JSON, and chain confirmation sample.</li>
+      <li>Record current paid-conversion baseline: network-target candidates, accepted submits, local drops, tip-overdue, invalidated/non-current/stale rejects, confirmed-blue/payout-matched blocks, active MAC miner-hours.</li>
+      <li>Define rollback points for pool-only and corechain changes before any live canary.</li>
+    </ol>
+    <p><strong>Exit criteria:</strong> no one can accidentally deploy the staged corechain regression; baseline and rollback records exist; issue structure exists.</p>
+
+    <h3>Phase 1: Build The Paid-Conversion Evidence Harness</h3>
+    <ol>
+      <li>Add a candidate timeline collector that joins pool logs/DB, Prometheus metrics, node RPC, chain headers, and miner MAC identity.</li>
+      <li>For every network-target candidate, record: ASIC MAC, worker, job ID, template ID/seq if known, backend, template age, parent/root, receive time, local decision, submit RPC result, block hash/order, coinbase/payout address, blue/red status, settlement age.</li>
+      <li>Support offline replay from captured OfficePool logs and live observe-only sampling without changing pool behavior.</li>
+      <li>Emit pass/fail output, not only plots. Include exact reasons for unverified or unpaid candidates.</li>
+      <li>Add dashboard/API exposure for the latest harness result and raw evidence path.</li>
+    </ol>
+    <p><strong>Exit criteria:</strong> the harness can reproduce the current failure baseline and show which candidates were dropped locally, rejected by node, accepted but unconfirmed, or confirmed paid.</p>
+
+    <h3>Phase 2: Corechain Owns Template Validity</h3>
+    <ol>
+      <li>Restore paid-conversion protections: recent-template submit replay, fail-closed zero-address template rejection in all mining modes, coinbase address comparison in miner template equality, and default submit-obsolete-depth behavior/tests.</li>
+      <li>Add durable template identity fields to HTTP <code>getBlockTemplate</code>, WebSocket <code>RemoteGBTResult</code>, mining template health, and submit result structs. Add fields only; do not break legacy clients.</li>
+      <li>Implement an immutable template registry in <code>services/miner</code>, keyed by <code>template_id</code>, bounded by count and TTL, with hit/miss/eviction/expired/accepted-from-cache metrics.</li>
+      <li>Add <code>SubmitBlockHeaderV3(headerHex, template_id, extraNonce)</code>. V3 reconstructs from the cached immutable template when valid instead of the current live template.</li>
+      <li>Return structured outcomes: <code>accepted</code>, <code>template_id_unknown</code>, <code>template_expired</code>, <code>submit_obsolete_depth</code>, <code>coinbase_mismatch</code>, <code>txroot_mismatch</code>, <code>node_syncing</code>, <code>template_not_submit_ready</code>, and transport errors.</li>
+      <li>Keep V2 backward compatible and preserve recent-template replay for legacy matching during rollout.</li>
+      <li>Tighten mining health semantics: separate transport liveness, template cached usable, last-good valid, mineable now, submit ready, submit replay available, and build error blocking.</li>
+      <li>Preserve latest-only template scheduling: parent/tip and submit-obsolete invalidations outrank mempool churn; mempool rebuild bursts coalesce; slow WebSocket subscribers cannot block emission.</li>
+      <li>Make <code>BdagPool.ResetTemplate()</code> failures explicit and non-destructive: failed rebuilds must not replace a still-good pending environment.</li>
+    </ol>
+    <p><strong>Corechain tests:</strong> old solved header submits after newer template; node restart returns <code>template_id_unknown</code>; zero address is blocked in all modes; coinbase mismatch fails explicitly; obsolete depth is honored; last-good survives nonblocking EVM pending failure but expires on parent mismatch/true expiry; slow subscriber does not block template stream.</p>
+
+    <h3>Phase 3: Pool Consumes The Contract In Observe-Only Mode</h3>
+    <ol>
+      <li>Add new template validity fields to pool template models and <code>JobData</code>.</li>
+      <li>Feature-detect V3 submit support per backend. Keep legacy behavior as default for the first observe-only build.</li>
+      <li>Store corechain validity fields with each job and emit metrics without changing local block-candidate decisions.</li>
+      <li>Record what the new policy would have done for each local drop: would submit, would reject with source-invalid, would clean-refresh, or would pause work.</li>
+      <li>Split source states: transport healthy, template source eligible, submit eligible, paid-mining eligible. Do not let fresh template transport alone imply submit readiness.</li>
+      <li>Harden runtime admin: loopback-only by default or action-token required; every mutation writes an audit record and rollback values.</li>
+    </ol>
+    <p><strong>Exit criteria:</strong> observe-only data proves which current local drops are false drops under the corechain contract, without increasing risk on live mining.</p>
+
+    <h3>Phase 4: Pool Enforces The Contract</h3>
+    <ol>
+      <li>Add flags: <code>POOL_TEMPLATE_VALIDITY_CONTRACT_ENABLED</code>, <code>POOL_BLOCK_CANDIDATE_POLICY=legacy|observe|contract</code>, and emergency fallback to legacy.</li>
+      <li>Reorder <code>mining.submit</code> for known old jobs: if the job is retained, reconstruct and hash before rejecting it as non-current. Cheap stale-share rejects remain allowed for non-block shares.</li>
+      <li>For network-target candidates, submit when corechain says the template is submit-valid, even if local age/current-job/current-parent heuristics would have rejected it.</li>
+      <li>Reject locally only for objective duplicates, malformed work, or source-authoritative invalidity.</li>
+      <li>Pin submit validation to the backend/template that issued the job. Cross-source submission must require an explicit compatible template contract.</li>
+      <li>Replace broad clean-refresh triggers with source-classified invalidations. Mempool churn must not force clean work unless corechain says old work is no longer submit-valid.</li>
+      <li>Demote adaptive optimizer until paid evidence exists. It may tune load/latency knobs, not candidate-age truth.</li>
+    </ol>
+    <p><strong>Pool tests:</strong> non-current but source-valid block candidate is submitted; stale share is rejected cheaply; source-invalid block candidate is dropped with reason; parent-changed valid-within-depth submits; mempool-only churn does not invalidate paid work; submit-ready false with valid last-good serves; submit-ready false with no valid template pauses work; runtime admin auth works; legacy fallback works.</p>
+
+    <h3>Phase 5: Dashboard And Watchdog Make Paid Mining First Class</h3>
+    <ol>
+      <li>Add top-level <code>paid_mining_state</code>: <code>sync_only_no_miners</code>, <code>ready_no_miners</code>, <code>mining_paid_ok</code>, <code>mining_paid_degraded</code>, <code>mining_unpaid</code>, <code>template_source_unready</code>, <code>stack_down</code>.</li>
+      <li>Split current mixed health booleans into <code>has_recent_share_activity</code>, <code>has_recent_block_candidate_activity</code>, <code>has_recent_accepted_submit</code>, and <code>has_recent_confirmed_onchain_paid_block</code>.</li>
+      <li>Add a first-screen paid-mining panel: state, last accepted submit age, last on-chain paid block, candidate acceptance ratio, main loss reason, selected backend mineable/submit-ready/template age, current repair action, cooldown.</li>
+      <li>Make watchdog suppression use accepted submit or chain confirmation, not shares.</li>
+      <li>Detect hashing-but-unpaid explicitly. Repair order: runtime admin/template refresh, pool submit path, node/template source health, then ASIC only if ASIC API/hash health is independently bad.</li>
+      <li>Persist incidents when accepted shares continue but paid submits do not. Repeated failed repairs mark dashboard critical.</li>
+      <li>Move miner repair cooldowns and identity state to MAC keys, not IPs.</li>
+    </ol>
+    <p><strong>Dashboard tests:</strong> fresh shares plus stale accepted submits and <code>node_submit_ready=false</code> produces paid-mining degraded/unpaid; fresh accepted submits without chain confirmation is pending verification, not fully paid ok; no miners shows sync-only and skips template probes.</p>
+
+    <h3>Phase 6: Stack Profiles, Installers, And Release Packaging</h3>
+    <ol>
+      <li>Add explicit capability profiles, including <code>pi5-asic-router-usb</code>, Pi5 non-router, AMD64 SSD/NVMe, ARM64 SSD/NVMe, no-miner sync node, multi-ASIC pool, and source-serving eligibility.</li>
+      <li>Expose profile facts in <code>/api/status</code>: one production node, DHCP/NAT gateway, USB chain data, template backend count, miner identity mode, IO budget, source-serving eligibility.</li>
+      <li>On USB/router profiles, do not enable source-serving timers that stage, publish, rsync, tar, scan, or serve chain artifacts.</li>
+      <li>Preserve no-miner sync-only behavior in installer and repair paths: no mining flags, no template probes, no mining work generation until actual miner demand and a non-zero payment address exist.</li>
+      <li>Release manifest pins exact SHAs and image digests for <code>pool</code>, <code>blockdag-corechain</code>, <code>dashboard</code>, and <code>pool-stack-docker</code>.</li>
+      <li>Runtime status exposes packaged repo SHAs/image digests and validates they match the release manifest. Mining start refuses on mismatch unless a logged emergency override is set.</li>
+      <li>Keep repo boundaries clean: dashboard source in <code>dashboard</code>; stack packages/pins it and validates packaged copy.</li>
+    </ol>
+    <p><strong>Exit criteria:</strong> USB/router hosts cannot accidentally become artifact sources; fresh installs remain sync-only without miners; releases are provenance-pinned and drift-detecting.</p>
+
+    <h3>Phase 7: Verification And Canary Gates</h3>
+    <ol>
+      <li>Stage 0: unit and integration tests pass on Linux ARM64 and AMD64. Include corechain, pool, dashboard, stack packaging, and release architecture tests.</li>
+      <li>Stage 1: offline replay of captured OfficePool failure data shows reduced false local expiry and no increase in stale-parent or unsafe submits.</li>
+      <li>Stage 2: non-mining test host validates sync, template health, profile detection, release manifest, and dashboard paid state without ASICs.</li>
+      <li>Stage 3: observe-only one-X100 canary, minimum 60 minutes for pool-only changes and 4 hours for corechain/template changes.</li>
+      <li>Stage 4: active one-X100 canary with rollback armed. Compare to baseline and comparable X100 normalized by active MAC miner-hour.</li>
+      <li>Stage 5: multi-miner canary only after single-X100 passes. Never use multi-miner as the first proof point.</li>
+      <li>Stage 6: 12 to 24 hour live Pi5 appliance soak before replacing a known-good release.</li>
+    </ol>
+    <p><strong>Initial SLOs:</strong> node mineable and submit-ready for at least 95 percent of active window excluding declared maintenance; local block-candidate discard under 5 percent unless source-authoritative; tip-overdue under 3 to 5 percent during early canary; paid confirmed-blue blocks per active X100/MAC-hour no worse than 90 percent of comparable control, then tighten after confidence improves.</p>
+
+    <h3>Phase 8: Rollback And Drift Prevention</h3>
+    <ol>
+      <li>Before each canary, capture rollback: image IDs, source SHAs, compose env, <code>.env</code>, systemd state, database migration state, chain path, dashboard/runtime config, and watchdog overrides.</li>
+      <li>Pool rollback first when only pool behavior regresses. Corechain rollback only if structured validity or submit replay is proven wrong or node stability regresses.</li>
+      <li>Watchdogs must not fight rollback or automatically re-upgrade.</li>
+      <li>Runtime admin overrides must be reversible by clearing overrides and restoring persisted env.</li>
+      <li>CI and release scripts fail if paid-conversion gates are missing, stale, or not tied to the exact release manifest.</li>
+      <li>Memory and SDLC item must receive canary evidence before promotion.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Repository Work Breakdown</h2>
+    <table>
+      <thead><tr><th>Repo</th><th>Owned Work</th><th>Do Not Merge Until</th></tr></thead>
+      <tbody>
+        <tr><td><code>blockdag-corechain</code></td><td>Template identity, immutable cache, V3 submit, structured outcomes, latest-only/last-good semantics, nodeworker readiness gate, zero-address and coinbase invariants.</td><td>Regression quarantine resolved; corechain tests prove old valid solved headers are accepted after template refresh.</td></tr>
+        <tr><td><code>pool</code></td><td>Store template contract in jobs, V3 submit support, protected network-target candidate path, router eligibility split, contract-mode metrics, runtime admin hardening.</td><td>Corechain contract exists and observe-only pool data confirms false local drops.</td></tr>
+        <tr><td><code>dashboard</code></td><td>Paid mining state, split recent activity truths, first-screen paid panel, watchdog paid-conversion repairs, MAC-keyed miner state, runbooks.</td><td>Tests prove shares cannot mask unpaid mining.</td></tr>
+        <tr><td><code>pool-stack-docker</code></td><td>Capability profiles, USB low-IO source blocking, no-miner sync-only installer enforcement, release manifest/pinning, canary and rollback scripts, packaging validation.</td><td>Release gate can prove exact source/image provenance and paid-conversion evidence.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Final Definition Of Done</h2>
+    <ul>
+      <li>Corechain is the authority for template validity and submit readiness.</li>
+      <li>The pool does not discard network-target candidates from local wall-clock/current-job guesses while the source says submit-valid.</li>
+      <li>The dashboard answers "am I earning?" on the first screen and cannot show paid mining green when submits or chain confirmation are stale.</li>
+      <li>Watchdog repairs unpaid mining as a paid-conversion incident, not as generic share or container health.</li>
+      <li>USB/router profile cannot serve bulk chain data by default.</li>
+      <li>No-miner installs remain sync-only forever by default until real miner demand and a non-zero payment address exist.</li>
+      <li>Release manifests pin all repos and images, and runtime exposes those pins.</li>
+      <li>Promotion requires confirmed-blue paid blocks per active MAC/X100 miner-hour over a meaningful canary window.</li>
+      <li>Rollback is rehearsed and cannot be undone by watchdog drift.</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

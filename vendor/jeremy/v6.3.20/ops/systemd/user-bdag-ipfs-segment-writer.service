@@ -1,0 +1,15 @@
+[Unit]
+Description=BlockDAG low-priority IPFS segment writer
+After=default.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/bdag-ipfs-segment-writer.env
+WorkingDirectory=%h
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=10
+IOWeight=10
+MemoryHigh=1G
+TimeoutStartSec=10min
+ExecStart=/usr/bin/env bash -lc 'cd "${BDAG_PROJECT_ROOT:?set BDAG_PROJECT_ROOT in ~/.config/bdag-ipfs-segment-writer.env}" && exec ./ops/ipfs_segment_writer.py --json'

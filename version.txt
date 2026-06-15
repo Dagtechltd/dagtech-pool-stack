@@ -1,0 +1,4 @@
+dagtech-pool-stack v0.1.0-jeremy6.3.20-base
+upstream-source: BlockdagEngineering jeremy-dev-release v6.3.20 (2026-06-14)
+upstream-zip-sha256: 11363f5e91cea12a541ad39ee8df5fd02b7e479d60e7c1203b1d5c9803b4b553
+upstream-ipfs-cid: bafybeiga7llbde6jh2pzfdp2pvg3woqqxzy4aetmdijigaop67tu5ycffi

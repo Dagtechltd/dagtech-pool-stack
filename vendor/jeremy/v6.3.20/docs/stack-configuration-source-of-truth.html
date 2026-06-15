@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlockDAG Stack Configuration Source Of Truth</title>
+  <style>
+    :root { color-scheme: dark light; --bg:#101318; --panel:#171c23; --line:#344052; --text:#eef3f8; --muted:#aeb8c5; --accent:#62d0a4; --warn:#f2c14e; --code:#d7f5ff; }
+    body { margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); line-height:1.55; }
+    main { max-width:1060px; margin:0 auto; padding:28px 20px 48px; }
+    h1 { margin:0 0 8px; font-size:2rem; }
+    h2 { margin-top:28px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+    code, pre { color:var(--code); background:#0b0e13; border:1px solid var(--line); border-radius:6px; }
+    code { padding:1px 5px; }
+    pre { padding:12px; overflow:auto; }
+    table { width:100%; border-collapse:collapse; margin:14px 0; }
+    th, td { border:1px solid var(--line); padding:9px 10px; vertical-align:top; }
+    th { background:#202632; text-align:left; }
+    .lede { color:var(--muted); max-width:900px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:8px; padding:14px; margin:14px 0; }
+    .warn { border-left-color:var(--warn); }
+  </style>
+  <script id="agent-metadata" type="application/json">
+  {
+    "document_type": "stack_configuration_source_of_truth",
+    "created": "2026-06-07",
+    "repo": "pool-stack-docker",
+    "canonical_defaults": "ops/config/stack-defaults.env",
+    "validation": "scripts/validate-stack-defaults.py",
+    "rules": [
+      "Change stack-owned deployment defaults in ops/config/stack-defaults.env first.",
+      "Treat .env examples, compose fallback expressions, installers, and runtime env files as projections.",
+      "Service-local fallbacks are allowed only for direct developer runs and must not become site-specific deployment truth.",
+      "Do not reintroduce retired dashboard repositories as dashboard sources; active release dashboard source is BlockdagEngineering/dashboard2 main."
+    ]
+  }
+  </script>
+</head>
+<body>
+  <main>
+    <h1>Stack Configuration Source Of Truth</h1>
+    <p class="lede">Deployment defaults for the BlockDAG pool stack are centralized so one value does not drift across compose, installers, dashboard runtime helpers, watchdogs, and tests.</p>
+
+    <section class="card">
+      <h2>Rule</h2>
+      <p><code>ops/config/stack-defaults.env</code> owns non-secret, non-site-specific deployment defaults. Change values there first, then let scripts and validation project or verify those values elsewhere.</p>
+      <p>Do not put secrets, wallet keys, private keys, host IPs, local data paths, or operator-specific overrides in the defaults file.</p>
+    </section>
+
+    <section>
+      <h2>Projection Points</h2>
+      <table>
+        <thead><tr><th>Location</th><th>Role</th><th>Expected Behavior</th></tr></thead>
+        <tbody>
+          <tr><td><code>.env.example</code>, <code>.env.cpu.example</code>, <code>ops/portable.env.example</code></td><td>Human-readable examples</td><td>May contain concrete values, but <code>scripts/validate-stack-defaults.py</code> must prove they match canonical defaults.</td></tr>
+          <tr><td><code>docker-compose.yml</code></td><td>Container env projection</td><td>Compose fallback expressions must match canonical defaults when a fallback is used.</td></tr>
+          <tr><td><code>ops/install-dashboard.sh</code></td><td>Host systemd/dashboard env installer</td><td>Loads <code>stack-defaults.env</code> and writes generated env values through <code>stack_default</code>.</td></tr>
+          <tr><td><code>ops/release-install.sh</code></td><td>Release appliance installer</td><td>Loads the same defaults file in source or packaged layouts and writes defaults through helper functions.</td></tr>
+          <tr><td><code>ops/pool_ops.py</code></td><td>Dashboard/watchdog runtime helper</td><td>Loads stack defaults before module-level constants are frozen, then overlays runtime env files and operator overrides.</td></tr>
+          <tr><td><code>ops/maintain-rawdatadir-sidecar.sh</code></td><td>Low-priority sidecar maintenance</td><td>Loads stack defaults before applying the conservative rsync bandwidth cap and sidecar retention settings.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card warn">
+      <h2>Dashboard Source Boundary</h2>
+      <p>The active dashboard repository is <code>BlockdagEngineering/dashboard2</code> on <code>main</code>, checked out locally beside the stack repo at <code>../dashboard2</code>. Retired dashboard prototypes are not part of the active source workspace and must not be used as fallback dashboard sources.</p>
+    </section>
+
+    <section>
+      <h2>Validation</h2>
+      <pre><code>PYTHONDONTWRITEBYTECODE=1 python3 scripts/validate-stack-defaults.py
+BDAG_RUNTIME_DIR=/tmp/bdag-stack-validate-runtime PYTHONDONTWRITEBYTECODE=1 scripts/validate-pi5-restart-hardening.sh</code></pre>
+      <p>The first check validates source-of-truth projection. The second includes it in the broader release hardening gate.</p>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlockDAG Pool Stack Release Readiness Gates</title>
+  <style>
+    :root { color-scheme: dark light; --bg:#101318; --panel:#171d25; --line:#334154; --text:#edf3f8; --muted:#aeb8c5; --ok:#65d69c; --warn:#f1c85b; --bad:#ff7777; --info:#82b7ff; }
+    body { margin:0; font:14px/1.55 system-ui, sans-serif; background:var(--bg); color:var(--text); }
+    main { max-width:1120px; margin:0 auto; padding:28px 22px 56px; }
+    h1 { margin:0 0 8px; font-size:30px; }
+    h2 { margin:30px 0 12px; border-bottom:1px solid var(--line); padding-bottom:7px; }
+    a { color:var(--info); }
+    code, pre { background:#080c12; border:1px solid var(--line); border-radius:6px; color:#dff7ff; }
+    code { padding:1px 5px; }
+    pre { padding:12px; overflow:auto; }
+    table { width:100%; border-collapse:collapse; background:var(--panel); }
+    th, td { border:1px solid var(--line); padding:9px 10px; vertical-align:top; text-align:left; }
+    th { background:#202838; }
+    .lede { color:var(--muted); max-width:900px; }
+    .chip { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 8px; margin:0 5px 5px 0; color:var(--muted); }
+    .ok { color:var(--ok); }
+    .warn { color:var(--warn); }
+    .bad { color:var(--bad); }
+  </style>
+  <script type="application/json" id="agent-metadata">
+  {
+    "document_type": "release_readiness_runbook",
+    "repo": "pool-stack-docker",
+    "tool": "scripts/release-readiness-check.py",
+    "scope": "read-only install/release health gates",
+    "checks": [
+      "postgres schema tables, columns, and required indexes",
+      "node mineable or synced state",
+      "peer sanity with self and loopback peers filtered",
+      "functional getBlockTemplate response",
+      "short mining RPC stability window"
+    ],
+    "production_safety": "does not restart services or alter chain, pool, or database state"
+  }
+  </script>
+</head>
+<body>
+<main>
+  <h1>Release Readiness Gates</h1>
+  <p class="lede">Run these gates after a stack is installed and before telling an operator that the deployment is mining-ready. Container liveness is not enough: a node can be reachable while Postgres schema, peer state, sync state, or template generation is not usable for mining.</p>
+  <span class="chip ok">read-only</span>
+  <span class="chip">source package tooling</span>
+  <span class="chip">no service restart</span>
+
+  <h2>Command</h2>
+  <pre><code>python3 scripts/release-readiness-check.py
+./scripts/validate-rc-local.sh</code></pre>
+  <p>The readiness script reads <code>.env</code> by default, queries the Compose <code>postgres</code> service for schema state, and calls the configured node RPC endpoint. The local RC validator copies tracked and unignored source files to a temporary directory and runs source gates there, so live <code>ops/runtime</code> state in an active checkout is not deleted. Both commands exit non-zero if any required gate fails.</p>
+
+  <h2>Gates</h2>
+  <table>
+    <thead><tr><th>Gate</th><th>Pass Condition</th><th>Failure Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Postgres schema</td><td>Required pool tables, columns, and indexes exist, including <code>credits_block_miner_unique</code> on <code>credits(block_hash, miner_address)</code> and the <code>block_submissions</code> history table/indexes.</td><td>The pool may start but fail accounting, maturity, payout, block persistence, or submit-outcome history paths. Missing credit idempotency can break duplicate-safe submit accounting; missing submission history breaks A/B evidence.</td></tr>
+      <tr><td>Node RPC</td><td><code>getNodeInfo</code> responds with a structured object.</td><td>RPC auth, endpoint, module configuration, or node process is not ready.</td></tr>
+      <tr><td>Mineable/synced</td><td><code>getTemplateHealth</code> reports mineable/submit-ready, or the older <code>isCurrent</code> fallback returns true.</td><td>The node is reachable but not a safe mining backend yet.</td></tr>
+      <tr><td>Peer sanity</td><td>At least one active sane peer remains after filtering the node itself, empty or unparseable addresses, loopback, unspecified, and inactive peers.</td><td>The node may be isolated or accidentally connected only to itself/local addresses, or peer discovery may be advertising unusable peers.</td></tr>
+      <tr><td>Template function</td><td><code>getBlockTemplate</code> returns required mining fields including height, parent, roots, coinbase address, and <code>nbits</code>.</td><td>The pool cannot create valid Stratum jobs even if containers look healthy.</td></tr>
+      <tr><td>Mining RPC stability</td><td>The mineable/synced, peer sanity, and template checks keep passing across the configured short sample window.</td><td>The node or RPC path may be flapping during startup, peer discovery, or IBD recovery.</td></tr>
+      <tr><td>Deployment portability</td><td>The local RC validator passes from a clean temporary source copy and the dashboard collectors use Python HTTP rather than host-only tools.</td><td>The release may work on the maintainer machine but fail on Pi5, Linux AMD64, macOS Docker Desktop, or Windows Docker Desktop because local runtime state or missing host utilities leaked into validation.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Useful Options</h2>
+  <table>
+    <thead><tr><th>Option</th><th>Use</th></tr></thead>
+    <tbody>
+      <tr><td><code>--rpc-url http://host:38131</code></td><td>Check a node endpoint outside the local Compose default.</td></tr>
+      <tr><td><code>--min-peers 3</code></td><td>Require more healthy external peers for production acceptance.</td></tr>
+      <tr><td><code>--stability-samples 5</code></td><td>Require more consecutive mining RPC samples before readiness passes. The default is <code>3</code>.</td></tr>
+      <tr><td><code>--stability-interval 2</code></td><td>Set seconds between stability samples. The default is <code>1</code>.</td></tr>
+      <tr><td><code>--mining-address 0x...</code></td><td>Pass the intended payout/mining address to <code>getBlockTemplate</code>.</td></tr>
+      <tr><td><code>--pg-url postgres://...</code></td><td>Use a direct <code>psql</code> connection instead of <code>docker compose exec postgres</code>.</td></tr>
+      <tr><td><code>--skip-postgres</code></td><td>Run only node/template gates, useful for offline RPC troubleshooting.</td></tr>
+      <tr><td><code>--json</code></td><td>Emit a machine-readable result for CI, installers, or release scripts.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Release Use</h2>
+  <pre><code># After docker compose up -d and after the node has had time to sync:
+./scripts/init-pool-postgres.sh
+./scripts/release-readiness-check.py --min-peers 1
+
+# For CI or an installer:
+./scripts/release-readiness-check.py --json</code></pre>
+  <p class="warn">Do not bypass a failed gate by marking the deployment healthy. Fix the failing dependency or wait for sync/template readiness, then rerun the checker.</p>
+</main>
+</body>
+</html>

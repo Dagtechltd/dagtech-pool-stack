@@ -1,0 +1,13 @@
+[Unit]
+Description=BlockDAG raw datadir sidecar safe/latest verifier
+After=default.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/bdag-rawdatadir-sidecar.env
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=10
+IOWeight=10
+MemoryHigh=512M
+ExecStart=/usr/bin/env bash -lc 'cd "${BDAG_PROJECT_ROOT:?set BDAG_PROJECT_ROOT in ~/.config/bdag-rawdatadir-sidecar.env}" && exec ./ops/verify-rawdatadir-sidecar.py --source-dir "${BDAG_RAWDATADIR_SIDECAR_SOURCE:-}" --sidecar-dir "${BDAG_RAWDATADIR_SIDECAR_DIR:-}" --status-file "${BDAG_RAWDATADIR_SIDECAR_SAFE_STATUS:-$BDAG_PROJECT_ROOT/ops/runtime/rawdatadir-sidecar-safe-status.json}" --json'

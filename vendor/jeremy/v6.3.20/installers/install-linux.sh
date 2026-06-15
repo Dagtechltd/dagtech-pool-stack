@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export BDAG_INSTALL_OS=linux
+exec bash "$SCRIPT_DIR/install-unix-common.sh" "$@"

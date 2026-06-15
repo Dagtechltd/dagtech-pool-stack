@@ -1,0 +1,21 @@
+[Unit]
+Description=BlockDAG pool boot-time recovery
+After=default.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_PROJECT_ROOT=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_RUNTIME_DIR=/home/jeremy/blockdag-asic-pool/ops/runtime
+Environment=BDAG_WATCHDOG_INTERVAL=60
+Environment=BDAG_WATCHDOG_FAILURE_THRESHOLD=3
+Environment=BDAG_CLEAN_RESTORE_COOLDOWN=1800
+Environment=BDAG_ENABLE_AUTOMATIC_CLEAN_RESTORE=0
+Environment=BDAG_BOOT_REPAIR_DIRTY_POLICY=start
+Environment=BDAG_BOOT_REPAIR_CRITICAL_POLICY=restart
+EnvironmentFile=-/home/jeremy/blockdag-asic-pool/ops/runtime/ops.env
+ExecStartPre=/bin/sh -c 'i=0; while [ "$i" -lt 60 ]; do (docker info >/dev/null 2>&1 || sudo -n docker info >/dev/null 2>&1) && exit 0; i=$((i+1)); sleep 5; done; exit 1'
+ExecStart=/usr/bin/python3 /home/jeremy/blockdag-asic-pool/ops/watchdog.py --boot-repair
+
+[Install]
+WantedBy=default.target

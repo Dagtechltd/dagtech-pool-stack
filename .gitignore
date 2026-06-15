@@ -1,0 +1,11 @@
+# IPFS-pinned binaries — see vendor/jeremy/v6.3.20/bin/README.md
+vendor/jeremy/v6.3.20/bin/*
+!vendor/jeremy/v6.3.20/bin/README.md
+
+# Local runtime
+data/
+chain-download/
+*.zip
+*.tar.gz
+*.tar.zst
+.env

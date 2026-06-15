@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard Tiered History Cache</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0f141b; --panel:#171e28; --line:#2b394a; --text:#edf3f7; --muted:#9fb0bf; --accent:#67d4ad; --warn:#f0c65a; }
+    body { margin:0; font:14px/1.55 system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
+    main { max-width:1060px; margin:0 auto; padding:28px 18px 48px; }
+    h1 { margin:0 0 8px; font-size:30px; }
+    h2 { margin:26px 0 10px; border-bottom:1px solid var(--line); padding-bottom:7px; }
+    p { margin:0 0 12px; }
+    a { color:var(--accent); }
+    code { background:#0a0e13; border:1px solid var(--line); border-radius:6px; padding:1px 5px; color:#dff6ff; }
+    table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); margin:14px 0; }
+    th, td { border-bottom:1px solid var(--line); padding:9px 10px; text-align:left; vertical-align:top; }
+    th { color:#dfe8f5; font-size:12px; text-transform:uppercase; }
+    .lede { color:var(--muted); max-width:880px; }
+    .callout { border-left:4px solid var(--accent); background:#101b17; padding:12px 14px; border-radius:6px; }
+    .warn { border-left-color:var(--warn); background:#1d1a10; }
+  </style>
+  <script type="application/json" id="agent-metadata">
+  {
+    "document_type": "blockdag_dashboard_architecture_note",
+    "topic": "tiered_history_cache",
+    "created_local": "2026-06-02T23:30:00+02:00",
+    "source_files": [
+      "ops/pool_ops.py",
+      "ops/tests/test_dashboard_tiered_history.py"
+    ],
+    "external_references": [
+      "https://www.rrdtool.org/rrdtool/doc/rrdtool.en.html",
+      "https://prometheus.io/docs/prometheus/latest/storage/",
+      "https://prometheus.io/docs/prometheus/3.0/configuration/recording_rules/"
+    ]
+  }
+  </script>
+</head>
+<body>
+<main>
+  <h1>Dashboard Tiered History Cache</h1>
+  <p class="lede">The Python operations dashboard uses an RRD-style cache for chart history so UI requests read bounded chart-ready data instead of rescanning long append logs.</p>
+
+  <section>
+    <h2>Design</h2>
+    <div class="callout">
+      Raw JSONL histories remain the recovery ledger. Dashboard chart APIs read the tier cache.
+      The hot tier is written to a RAM-backed path when available; older summaries are persisted on disk.
+    </div>
+    <table>
+      <thead><tr><th>Tier</th><th>Storage</th><th>Age Range</th><th>Step</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>minute</td><td><code>/dev/shm</code> or configured RAM dir</td><td>last 1 hour</td><td>60 seconds</td><td>Snappy live dashboard plots.</td></tr>
+        <tr><td>hour</td><td><code>ops/runtime/dashboard-history</code></td><td>1 hour to 24 hours</td><td>1 hour</td><td>One-day context without minute-level duplication.</td></tr>
+        <tr><td>day</td><td><code>ops/runtime/dashboard-history</code></td><td>24 hours to 7 days</td><td>1 day</td><td>Week-level trend context.</td></tr>
+        <tr><td>week</td><td><code>ops/runtime/dashboard-history</code></td><td>7 days to 31 days</td><td>1 week</td><td>Month-level trend context.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Implementation Notes</h2>
+    <p>The cache stores each sample in exactly one age tier, selecting the latest sample in each bucket. This follows the same operating principle as RRDtool round-robin archives: keep bounded high-resolution recent data and lower-resolution older data.</p>
+    <p>New sampler writes update the tier cache incrementally. On dashboard startup or first use after the RAM tier disappeared, the cache is rebuilt from the append-only source log.</p>
+    <p>Prometheus storage and recording-rule documentation support the same general principle: keep incoming samples in a hot head/WAL path, compact persistent blocks, and precompute dashboard-friendly series for repeated dashboard reads.</p>
+  </section>
+
+  <section>
+    <h2>Configuration</h2>
+    <table>
+      <thead><tr><th>Variable</th><th>Default</th></tr></thead>
+      <tbody>
+        <tr><td><code>BDAG_DASHBOARD_HISTORY_RAM_DIR</code></td><td>Auto: <code>/dev/shm/&lt;project&gt;-dashboard-history</code> when writable.</td></tr>
+        <tr><td><code>BDAG_DASHBOARD_HISTORY_DISK_DIR</code></td><td><code>ops/runtime/dashboard-history</code></td></tr>
+        <tr><td><code>BDAG_DASHBOARD_HISTORY_HOT_SECONDS</code></td><td><code>3600</code></td></tr>
+        <tr><td><code>BDAG_DASHBOARD_HISTORY_HOT_STEP_SECONDS</code></td><td><code>60</code></td></tr>
+        <tr><td><code>BDAG_DASHBOARD_HISTORY_HOURLY_SECONDS</code></td><td><code>86400</code></td></tr>
+        <tr><td><code>BDAG_DASHBOARD_HISTORY_DAILY_SECONDS</code></td><td><code>604800</code></td></tr>
+        <tr><td><code>BDAG_DASHBOARD_HISTORY_WEEKLY_SECONDS</code></td><td><code>2678400</code></td></tr>
+      </tbody>
+    </table>
+    <div class="callout warn">Do not replace this with full-history reads in request paths. If the raw ledger grows, optimize rebuilds or add bounded source-tail indexing rather than returning to per-request scans.</div>
+  </section>
+
+  <section>
+    <h2>References</h2>
+    <ul>
+      <li><a href="https://www.rrdtool.org/rrdtool/doc/rrdtool.en.html">RRDtool documentation</a>: consolidation and bounded round-robin archives.</li>
+      <li><a href="https://prometheus.io/docs/prometheus/latest/storage/">Prometheus storage documentation</a>: hot head/WAL plus compacted persistent blocks and retention limits.</li>
+      <li><a href="https://prometheus.io/docs/prometheus/3.0/configuration/recording_rules/">Prometheus recording rules</a>: precompute frequently needed dashboard series.</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

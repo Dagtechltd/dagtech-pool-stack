@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlockDAG IPFS Content Sidecar</title>
+  <style>
+    body { font: 15px/1.55 system-ui, sans-serif; margin: 0; color: #17202a; background: #f7f9fb; }
+    main { max-width: 980px; margin: 0 auto; padding: 32px 22px 54px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    h2 { margin-top: 28px; border-bottom: 1px solid #ccd6e0; padding-bottom: 6px; }
+    code { background: #eef3f7; border: 1px solid #d6e0ea; border-radius: 5px; padding: 1px 5px; }
+    li { margin: 6px 0; }
+    .callout { border-left: 4px solid #2f7d5f; background: #edf8f3; padding: 12px 14px; border-radius: 6px; }
+    .warn { border-left-color: #b7791f; background: #fff7e6; }
+  </style>
+  <script type="application/json" id="agent-metadata">
+  {
+    "document_type": "blockdag_ipfs_content_sidecar_design",
+    "source_files": [
+      "ops/ipfs_content_sidecar.py",
+      "ops/restore-rawdatadir-segment-artifact.py",
+      "ops/ipfs_segment_identity.py",
+      "ops/install-p2p-services.sh",
+      "ops/systemd/user-bdag-ipfs-content-sidecar.service",
+      "ops/systemd/user-bdag-ipfs-content-sidecar.timer"
+    ],
+    "trust_model": "IPFS is untrusted byte transport; signed raw-datadir manifests and consensus validation are authoritative."
+  }
+  </script>
+</head>
+<body>
+<main>
+  <h1>BlockDAG IPFS Content Sidecar</h1>
+  <p class="callout">The IPFS content sidecar makes finalized BlockDAG raw-datadir generations easier to find and fetch. The raw datadir sidecar seals immutable file/chunk generations with signed manifest roots; IPFS still must never decide chain trust from a CID alone.</p>
+
+  <h2>Design Rules</h2>
+  <ul>
+    <li><code>ops/seal_rawdatadir_sidecar_content.py</code> turns each completed sidecar rsync into immutable SHA-256 chunks plus a signed canonical manifest root.</li>
+    <li>The sealer reads <code>BDAG_RAWDATADIR_SIGNING_KEY_FILE</code>, defaulting to the same private key file provisioned for the IPFS segment writer. The key file is local private state and is not written into source or examples.</li>
+    <li><code>ops/ipfs_content_sidecar.py</code> pins only an already-finalized signed artifact directory without a <code>DO_NOT_PUBLISH</code> marker.</li>
+    <li><code>ops/restore-rawdatadir-segment-artifact.py</code> can reconstruct a raw node datadir from a local, SSH, or IPFS artifact source. IPFS restore requires a raw content index or artifact CID and a trusted signer roster.</li>
+    <li>Raw datadir content generation remains owned by <code>ops/maintain-rawdatadir-sidecar.sh</code> and <code>ops/seal_rawdatadir_sidecar_content.py</code>.</li>
+    <li>Final publishability remains gated by artifact finalization, sidecar content sealing, manifest signatures, and consensus validation.</li>
+    <li>Background work runs only after <code>background_maintenance_decision()</code> allows it; pressure defers the tick rather than disabling future attempts.</li>
+    <li>Raw-datadir sidecar safety is recorded with each attempt, but it is not a permanent gate that blocks pinning an already-finalized safe artifact.</li>
+    <li><code>DO_NOT_PUBLISH</code> markers and unsigned manifests fail closed by default.</li>
+    <li>The generated latest index records the artifact CID and manifest hash, but receivers must still verify the signed manifest root against <code>BDAG_RAWDATADIR_TRUSTED_SIGNERS</code>, chunk/file hashes, network, genesis, tip, state root, and then catch up through normal consensus.</li>
+  </ul>
+
+  <h2>Modes</h2>
+  <ul>
+    <li><code>BDAG_IPFS_CONTENT_SIDECAR_MODE=off</code>: disabled.</li>
+    <li><code>BDAG_IPFS_CONTENT_SIDECAR_MODE=auto</code>: timer wakes lazily, retries after pressure clears, and pins only when all gates pass and a finalized safe artifact exists.</li>
+    <li><code>BDAG_RAWDATADIR_SIDECAR_CONTENT_MODE=auto</code>: rawdatadir sidecar syncs also seal immutable file/chunk generations.</li>
+    <li><code>BDAG_IPFS_RAWDATADIR_RESTORE_PRESTART=1</code>: the release installer restores an empty <code>mainnet</code> datadir from a trusted IPFS raw artifact when <code>BDAG_IPFS_RAWDATADIR_RESTORE_ARTIFACT_CID</code>, <code>BDAG_IPFS_RAWDATADIR_RESTORE_INDEX_CID</code>, or <code>BDAG_IPFS_RAWDATADIR_RESTORE_INDEX_FILE</code> is configured.</li>
+  </ul>
+
+  <h2>Release Safety</h2>
+  <p class="warn">Installer logic keeps retry timers active in <code>auto</code> mode. The services self-defer when mining pressure, unsafe storage, missing finalization, unsigned manifests, or <code>DO_NOT_PUBLISH</code> markers make work unsafe. Single active-node mining systems remain fail-closed for publication unless a finalized artifact already exists and resource pressure has cleared.</p>
+
+  <h2>Status</h2>
+  <p>The raw checkpoint sidecar writes <code>ops/runtime/ipfs-content-sidecar-status.json</code> and <code>ops/runtime/ipfs-content/rawdatadir-content-index.json</code>. The chain-order segment writer owns <code>ops/runtime/ipfs-content/latest-index.json</code>. Dashboard/watchdog code can consume those files without probing IPFS on every refresh.</p>
+  <p>Pre-start raw IPFS restore writes <code>ops/runtime/ipfs-content/rawdatadir-restore-status.json</code>. The chain-order segment restore drill writes <code>ops/runtime/ipfs-content/restore-drill-status.json</code> and remains non-destructive.</p>
+
+  <h2>Permanent Discovery</h2>
+  <p>Future systems should read <code>ops/ipfs-content-discovery.json</code> first. It records the durable latest pointer <code>/ipns/k51qzi5uqu5djjlh4vxtmzyswx0qk4s3wdlf3yrpkszp38gq5sl71zcgmmc3jk</code> and the current immutable segment-index CID. A raw-datadir content index is a separate <code>bdag_ipfs_content_index_v1</code> document; do not feed a chain-order segment index into the raw restore path. The protocol design is recorded in <code>docs/ipfs-append-only-segment-protocol.html</code>.</p>
+</main>
+</body>
+</html>

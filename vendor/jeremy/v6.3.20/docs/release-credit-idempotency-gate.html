@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Release Credit Idempotency Gate</title>
+  <style>
+    :root { color-scheme: dark light; --bg:#101318; --panel:#171d25; --line:#334154; --text:#edf3f8; --muted:#aeb8c5; --ok:#65d69c; --warn:#f1c85b; --bad:#ff7777; --info:#82b7ff; }
+    body { margin:0; font:14px/1.55 system-ui, sans-serif; background:var(--bg); color:var(--text); }
+    main { max-width:1120px; margin:0 auto; padding:28px 22px 56px; }
+    h1 { margin:0 0 8px; font-size:30px; letter-spacing:0; }
+    h2 { margin:30px 0 12px; border-bottom:1px solid var(--line); padding-bottom:7px; }
+    code, pre { background:#080c12; border:1px solid var(--line); border-radius:6px; color:#dff7ff; }
+    code { padding:1px 5px; }
+    pre { padding:12px; overflow:auto; }
+    .lede { color:var(--muted); max-width:900px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(245px,1fr)); gap:12px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+    .chip { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 8px; margin:0 5px 5px 0; color:var(--muted); }
+    .ok { color:var(--ok); font-weight:700; }
+    .warn { color:var(--warn); font-weight:700; }
+    .bad { color:var(--bad); font-weight:700; }
+    li { margin:6px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Release Credit Idempotency Gate</h1>
+  <p class="lede">The release readiness checker must verify that the postgres database has the unique credit index required by duplicate-safe accounting before a package is considered mining-ready.</p>
+  <span class="chip ok">read-only</span>
+  <span class="chip">Postgres schema gate</span>
+  <span class="chip">blocks unsafe deploys</span>
+
+  <section class="grid">
+    <article class="card">
+      <h2>Problem</h2>
+      <p>Pool source PR #69 makes <code>AddCredits</code> use <code>ON CONFLICT (block_hash, miner_address)</code>. Existing databases will fail that query unless the matching unique index exists.</p>
+    </article>
+    <article class="card">
+      <h2>Fix</h2>
+      <p>Add <code>credits_block_miner_unique</code> to the packaged schema and make <code>release-readiness-check.py</code> verify the index on existing installs.</p>
+    </article>
+    <article class="card">
+      <h2>Boundary</h2>
+      <p class="ok">This is read-only readiness validation plus packaged schema alignment. It does not mutate a running database.</p>
+    </article>
+  </section>
+
+  <h2>Acceptance</h2>
+  <ul>
+    <li>Fresh installs create <code>credits_block_miner_unique</code>.</li>
+    <li>Existing installs fail readiness if the unique index is missing.</li>
+    <li>Tests prove the checker reports missing indexes clearly.</li>
+    <li>The HTML release-readiness runbook documents the new gate.</li>
+  </ul>
+</main>
+<script type="application/json" id="agent-metadata">
+{
+  "repo": "BlockdagEngineering/pool-stack-docker",
+  "branch": "feature/release-credit-idempotency-gate",
+  "base_branch": "feature/release-readiness-gates",
+  "related_pool_pr": 69,
+  "live_services_touched": false,
+  "target_files": [
+    "docs/release-credit-idempotency-gate.html",
+    "docs/release-readiness-gates.html",
+    "scripts/release-readiness-check.py",
+    "scripts/release_readiness_check_test.py",
+    "sql/pool-schema.sql"
+  ]
+}
+</script>
+</body>
+</html>

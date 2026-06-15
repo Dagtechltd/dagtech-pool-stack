@@ -1,0 +1,13 @@
+[Unit]
+Description=Run BlockDAG node child guard periodically
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=60s
+AccuracySec=15s
+Persistent=true
+RandomizedDelaySec=10s
+Unit=bdag-node-child-guard.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Allow ZeroTier BlockDAG P2P sync ports
+After=network-online.target zerotier-one.service docker.service
+Wants=network-online.target zerotier-one.service docker.service
+
+[Service]
+Type=oneshot
+Environment=BDAG_P2P_PORTS=8151,8152
+ExecStart=/usr/local/sbin/bdag-allow-zerotier-p2p-iptables
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Release Candidate Dashboard Source</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0d1117; --panel:#151b24; --line:#303b4d; --text:#eef3f8; --muted:#a8b3c4; --warn:#f5c45e; }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.55 system-ui,sans-serif; }
+    main { max-width:1050px; margin:0 auto; padding:28px 20px 48px; }
+    h1 { margin:0 0 8px; font-size:2rem; }
+    h2 { margin-top:26px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+    a { color:#82b7ff; }
+    code { background:#090d13; border:1px solid var(--line); border-radius:6px; padding:1px 5px; color:#d7f5ff; }
+    .lede { color:var(--muted); max-width:880px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; margin:12px 0; }
+    .warn { color:var(--warn); }
+  </style>
+  <script type="application/json" id="agent-metadata">
+  {
+    "document_type": "release_candidate_dashboard_source",
+    "created_at": "2026-05-24T22:50:22+02:00",
+    "stack_repo": "BlockdagEngineering/pool-stack-docker",
+    "dashboard_repo": "BlockdagEngineering/dashboard2",
+    "dashboard_ref": "main",
+    "captured_from": "/home/jeremy/blockdag-asic-pool/ops",
+    "dashboard_source_policy": "Use only BlockdagEngineering/dashboard2 main for release-candidate dashboard builds.",
+    "safety_note": "Exact live dashboard source was published to the dashboard repo. The stack RC must not import a dashboard/support bundle in a way that weakens restart hardening, status contract, chain-RPC height source, MAC-only ASIC identity, or one-node catch-up gates."
+  }
+  </script>
+</head>
+<body>
+  <main>
+    <h1>Release Candidate Dashboard Source</h1>
+    <p class="lede">The release candidate uses one dashboard repository: the live Python operations dashboard captured from the mining host.</p>
+    <section class="card">
+      <h2>Canonical Repository</h2>
+      <p><a href="https://github.com/BlockdagEngineering/dashboard2">BlockdagEngineering/dashboard2</a> branch <code>main</code> is the dashboard source for stack release builds.</p>
+    </section>
+    <section class="card">
+      <h2>Stack Packaging Rule</h2>
+      <p>The stack repository owns the node, pool, Docker, installer, and chain-sync release candidate. Any dashboard/control-plane import from the dashboard repository must pass the stack hardening validator before it can be packaged.</p>
+    </section>
+    <section class="card">
+      <h2>One Dashboard Source</h2>
+      <p>Do not add fallback dashboard repositories, prototype dashboards, or observability dashboard source trees to this release path. The <code>ops/observability</code> tree must stay out of this RC path.</p>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlockDAG Mining Resource Priority Policy</title>
+  <script type="application/json" id="agent-metadata">
+  {
+    "document_type": "resource_priority_policy",
+    "repo": "pool-stack-docker",
+    "priority": "P0 production hardening",
+    "goal": "Favor paid block production during CPU, RAM, and disk I/O contention without hard-capping useful idle capacity.",
+    "critical_services": ["mining node", "asic-pool", "postgres"],
+    "deprioritized_services": ["observability", "dashboard", "release seeding", "browser/desktop background work", "snapshots", "presync"],
+    "implementation_files": [
+      "ops/apply-mining-host-tuning.sh",
+      "ops/systemd/bdag-mining-host-tuning.service",
+      "ops/systemd/bdag-mining-host-tuning.timer",
+      "ops/install-p2p-services.sh",
+      "scripts/install-mining-appliance-profile.sh"
+    ]
+  }
+  </script>
+  <style>
+    body{margin:0;background:#0d1117;color:#e6edf3;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+    main{max-width:1120px;margin:auto;padding:28px}
+    h1{margin:0 0 8px;font-size:32px} h2{margin-top:28px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:18px 0}
+    .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
+    .label{color:#9da7b3;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+    .value{font-size:22px;font-weight:700}.ok{color:#3fb950}.warn{color:#d29922}
+    code{background:#010409;border:1px solid #30363d;border-radius:5px;padding:1px 5px}
+    table{width:100%;border-collapse:collapse;margin-top:10px}td,th{border:1px solid #30363d;padding:9px;text-align:left;vertical-align:top}
+    th{background:#161b22}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Mining Resource Priority Policy</h1>
+  <p>This policy makes the mining critical path win local contention while keeping the system work-conserving. Idle CPU and I/O can still be used by dashboards and maintenance jobs, but when the pool, active node, or database need resources, they take priority.</p>
+
+  <div class="grid">
+    <section class="card"><div class="label">Critical Path</div><div class="value ok">paid blocks</div></section>
+    <section class="card"><div class="label">Backend Model</div><div class="value">single active node</div></section>
+    <section class="card"><div class="label">Timer</div><div class="value">5 minutes</div></section>
+    <section class="card"><div class="label">Avoided Risk</div><div class="value warn">stale work</div></section>
+  </div>
+
+  <h2>Why</h2>
+  <p>BlockDAG mining runs on roughly one-second block cadence. Any avoidable local latency in template selection, Stratum job broadcast, submit handling, database writes, or peer propagation can turn solved work into stale, duplicate, overdue, or non-paying blocks.</p>
+  <p>Earlier live testing showed active/active template competition could reduce miner-normalized accepted block output by about 11-13%. The correct production shape is one canonical template lane and aggressive validation before the pool resumes mining.</p>
+
+  <h2>Policy</h2>
+  <table>
+    <tr><th>Class</th><th>Examples</th><th>Runtime Treatment</th></tr>
+    <tr><td>Active mining lane</td><td><code>node</code></td><td>Highest Docker CPU/blkio weight, highest process priority, best-effort I/O priority 0.</td></tr>
+    <tr><td>Pool and accounting</td><td><code>asic-pool</code>, <code>postgres</code>, Postgres worker processes</td><td>High Docker CPU/blkio weight, elevated process priority, best-effort I/O priority 0.</td></tr>
+    <tr><td>Observability and support</td><td>Grafana, Prometheus, Loki, exporters, dashboard, release seeder, snapshots, browser</td><td>Low CPU/IO weights or idle I/O so they yield under contention.</td></tr>
+  </table>
+
+  <h2>Implementation</h2>
+  <p><code>ops/apply-mining-host-tuning.sh</code> reads pool metrics to detect the selected backend. It then updates Docker CPU and block I/O weights, applies process <code>nice</code>/<code>ionice</code> values, writes cgroup v2 <code>memory.low</code> protection for the node, pool, and Postgres, and applies a node <code>memory.high</code> soft throttle when configured. The default <code>BDAG_NODE_MEMORY_HIGH=auto</code> reserves host headroom during catch-up so the node is reclaimed/throttled before it can drive the whole host into global OOM; it is intentionally not a hard <code>memory.max</code> kill limit. The helper also keeps selected host interfaces on <code>fq_codel</code> when <code>tc</code> is available. Docker does not provide a portable per-container network priority control in this release path; network protection is host qdisc tuning plus keeping mining-critical CPU and disk I/O scheduling ahead of dashboard and maintenance work. It intentionally does not restart mining services or ASICs.</p>
+  <p><code>bdag-mining-host-tuning.timer</code> reapplies the policy every five minutes and after boot. <code>/etc/default/bdag-mining-host-tuning</code> records <code>BDAG_PROJECT_ROOT</code> so the installed script can read the active release root. Fresh release installs run <code>scripts/install-mining-appliance-profile.sh</code> in non-destructive mode by default, then install P2P/IPFS support timers and <code>bdag-mining-host-tuning.timer</code>. Compose defaults also put container <code>/tmp</code> and <code>/var/tmp</code> on tmpfs so temporary churn avoids the chain-data disk.</p>
+</main>
+</body>
+</html>

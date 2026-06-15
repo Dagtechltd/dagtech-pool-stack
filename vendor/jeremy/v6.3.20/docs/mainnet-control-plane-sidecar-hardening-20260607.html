@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mainnet Control Plane and Sidecar Hardening - 2026-06-07</title>
+  <script type="application/json" id="agent-metadata">
+  {
+    "document_type": "bdag_stack_hardening_report",
+    "generated_at": "2026-06-07T00:55:00+02:00",
+    "repo": "BlockdagEngineering/stack",
+    "source_path": "/home/jeremy/blockdag-source/pool-stack-docker",
+    "live_path": "/home/jeremy/blockdag-asic-pool",
+    "network_policy": "mainnet_only",
+    "validation_summary": {
+      "active_stack_non_mainnet_search": "no forbidden non-mainnet literals outside ignored runtime/dashboard/generated paths",
+      "focused_unittest_status": "158 focused tests passed",
+      "restart_hardening_validator": "passed after removing generated source-checkout runtime/bytecode artifacts",
+      "live_status_after_sampler_restart": "overall ok, mode mining, can_mine true, four miners, no sync warnings"
+    }
+  }
+  </script>
+  <style>
+    body{font:14px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:1100px;margin:32px auto;padding:0 20px;background:#101418;color:#e9eef5}
+    h1,h2{line-height:1.2} h2{margin-top:28px}
+    code{background:#0b0f14;border:1px solid #2c3948;border-radius:5px;padding:1px 5px}
+    .ok{color:#79d6a3}.warn{color:#f0c96b}.bad{color:#ff8b8b}
+    table{border-collapse:collapse;width:100%;margin:12px 0}th,td{border:1px solid #344254;padding:7px 9px;text-align:left;vertical-align:top}th{background:#17202b}
+  </style>
+</head>
+<body>
+  <h1>Mainnet Control Plane and Sidecar Hardening</h1>
+  <p><strong>Generated:</strong> 2026-06-07 00:55 SAST</p>
+  <p>This report captures the active hardening pass after the public-chain divergence and restart-control incidents. The operating target is one mainnet mining node, one mining pool, deterministic control surfaces, and low-priority sidecars that preserve recovery options without competing with mining.</p>
+
+  <h2>What Changed</h2>
+  <table>
+    <thead><tr><th>Area</th><th>Current Behavior</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Mainnet-only stack paths</td>
+        <td>Rawdatadir, IPFS segment writer, sidecar sealing, restore, and installer-generated service env now reject non-mainnet network values and normalize to <code>mainnet</code>.</td>
+        <td>Active source and live runtime searches for forbidden non-mainnet network labels returned no matches outside ignored runtime/data/dashboard/generated paths.</td>
+      </tr>
+      <tr>
+        <td>Public-chain safety proof</td>
+        <td>Status collection now records a <code>canonical_mining_safety</code> payload from local/public EVM samples. Hash mismatch is retained as diagnostics for this node build; safety requires public reference evidence, miner/sample alignment, no public divergence, and no solo-mining signature.</td>
+        <td>Live dashboard status after sampler restart: <code>overall=ok</code>, <code>mode=mining</code>, <code>can_mine=true</code>, four miners, no sync warnings, <code>canonical_safe=true</code>.</td>
+      </tr>
+      <tr>
+        <td>Shared pool start gate</td>
+        <td>Automated pool starts require the shared gate and a positive canonical safety proof. Missing proof now fails closed.</td>
+        <td>Focused unit tests cover synced/no-proof blocking and ready/proof-available allow paths.</td>
+      </tr>
+      <tr>
+        <td>Running-pool containment</td>
+        <td>Status sampler can stop a running pool on explicit public-chain divergence or solo-mining suspicion and records the containment reason.</td>
+        <td>Focused tests cover <code>pool running + public divergence =&gt; containment stop</code>.</td>
+      </tr>
+      <tr>
+        <td>Automation control</td>
+        <td>Status-sampler config edits, node recreates, and systemd starts are now checked through automation-control action classes before mutating runtime config, containers, or user services.</td>
+        <td>Focused automation-control tests prove config edit, recreate, and systemd start are suppressed when control permission is absent.</td>
+      </tr>
+      <tr>
+        <td>Installer first start</td>
+        <td>Linux installers now provision automation control and start <code>postgres node dashboard</code> first. They no longer include <code>pool</code> in the initial compose startup command.</td>
+        <td>Deployment portability tests and the restart-hardening validator require sync-only first start.</td>
+      </tr>
+      <tr>
+        <td>Idle pool autostart</td>
+        <td>Status sampler no longer starts an idle synced pool by default. A stopped pool requires miner demand or a visible ASIC LAN candidate plus a passing shared gate.</td>
+        <td>Status-sampler tests cover idle synced pool staying stopped and miner-demand starts using the compose/gate path.</td>
+      </tr>
+      <tr>
+        <td>Node mining/template repair</td>
+        <td>Status sampler now requires the shared canonical gate before enabling node mining/template env, recreates nodes with <code>--no-build --pull never</code>, and does not enable <code>modules=miner</code> or <code>miner=true</code> in <code>node.conf</code>.</td>
+        <td>Regression tests block missing-canonical config edits and assert <code>node.conf</code> miner/module lines are not enabled.</td>
+      </tr>
+      <tr>
+        <td>IPFS content sidecar network guard</td>
+        <td>The IPFS content sidecar now blocks finalized artifact manifests that do not declare <code>mainnet</code> before publishing an index.</td>
+        <td>Regression test covers signed non-mainnet manifest rejection using neutral fixture naming.</td>
+      </tr>
+      <tr>
+        <td>Low-priority rawdatadir sidecar</td>
+        <td>The sidecar remains lazy/retrying, mainnet-only, <code>nice</code>/<code>ionice</code> lowered, systemd resource-weighted, and rsync bandwidth-limited to 4096 KiB/s by default. It no longer uses rsync hard-link tracking and keeps open hard-linked restore points before refreshing the mutable mirror.</td>
+        <td>Live service command uses <code>rsync -a ... --bwlimit 4096</code> without <code>-H</code> or default <code>--delay-updates</code>. Process RSS is small; cgroup memory is mostly file cache accounting during I/O.</td>
+      </tr>
+      <tr>
+        <td>Status truthfulness</td>
+        <td>Selected backend source-health degradation is advisory when recent accepted block submissions prove the pool is still submitting blocks. This avoids showing a false sync/down warning while mining is demonstrably active.</td>
+        <td>Focused tests cover advisory degradation with recent paid work. Live status settled at <code>ok/mining</code>.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Important Boundaries</h2>
+  <ul>
+    <li>The active pool stack is mainnet-only. Wider workspace scans still find non-mainnet references in core protocol repositories, old research worktrees, backups, and vendored geth data. Those were not blindly rewritten because that would be a separate protocol-level change with consensus and test implications.</li>
+    <li>The current stack-level proof is a containment and orchestration guard. The deeper architecture still needs a corechain and pool job-level canonical safety lease so template/job/submit paths cannot exist without fresh public-mainnet safety evidence.</li>
+    <li>The sidecar is a recovery aid and artifact source, not a consensus proof. Restore or publish promotion must remain gated by independent chain validation.</li>
+  </ul>
+
+  <h2>Remaining Architecture Work</h2>
+  <ol>
+    <li><strong>Corechain mining safety lease:</strong> add a public-mainnet safety snapshot with external witness evidence, same-height DAG/EVM anchors, expiry, generation, quarantine reason, and chain ID. Gate every template and submit ingress before mining work is produced or accepted.</li>
+    <li><strong>Pool job safety lease:</strong> attach the canonical safety lease to fetched templates and Stratum jobs. Cached templates, rebroadcast, recovery, submit, and fanout must hard-veto missing, stale, wrong-network, or unsafe leases.</li>
+    <li><strong>Installer sequencing:</strong> install and start node/dashboard sync-only first, rebuild plot/global/wallet data with a visible dashboard holding screen, then start the pool only through the shared pool gate after canonical safety passes.</li>
+    <li><strong>Single mutation broker:</strong> continue reducing direct Docker/systemd/config mutations so watchdog, sampler, sentinel, peer updater, snapshot, and sidecar scripts submit one audited mutation intent rather than independently fighting for control.</li>
+    <li><strong>Append-only recovery ledger:</strong> separate the mutable rsync mirror from an append-only local ledger of safe points and signed/IPFS-ready immutable segment generations.</li>
+    <li><strong>Workspace cleanup policy:</strong> decide whether non-mainnet protocol references in corechain and research worktrees are product scope. If yes, do it as an explicit consensus/protocol cleanup project with tests, not as an incidental pool-stack patch.</li>
+  </ol>
+
+  <h2>GitHub Tracking</h2>
+  <ul>
+    <li><a href="https://github.com/BlockdagEngineering/stack/issues/51">#51</a>: public-mainnet canonical mining safety lease across corechain and pool jobs.</li>
+    <li><a href="https://github.com/BlockdagEngineering/stack/issues/52">#52</a>: installers sync-only first, then pool only through the shared gate.</li>
+    <li><a href="https://github.com/BlockdagEngineering/stack/issues/53">#53</a>: append-only recovery ledger for rawdatadir/IPFS sidecar safe points.</li>
+    <li><a href="https://github.com/BlockdagEngineering/stack/issues/54">#54</a>: centralize stack mutations behind one audited broker.</li>
+  </ul>
+
+  <h2>Validation Run</h2>
+  <p>Focused Python validation passed with temporary runtime directories and bytecode disabled: 158 tests covered rawdatadir sidecar safety, IPFS segment writer, IPFS content sidecar, chain-state self-heal mainnet-only behavior, chain RPC resilience, pool start gate, status sampler mining imperative, deployment portability, rawdatadir sidecar finalization/verify, automation control, pool efficiency loss ledger, and no-miner status collection.</p>
+  <p>Static release validation also passed: release bootstrap static tests, rawdatadir artifact static tests, doc consistency check, and restart-hardening validator.</p>
+  <p>Live validation after restarting the sampler showed <code>overall ok</code>, <code>mode mining</code>, <code>can_mine true</code>, four connected miners, fresh accepted block submit/share data, no sync warnings, and canonical safety true.</p>
+</body>
+</html>

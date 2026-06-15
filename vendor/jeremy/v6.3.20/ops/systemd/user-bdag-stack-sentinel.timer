@@ -1,0 +1,13 @@
+[Unit]
+Description=Run BlockDAG mining stack sentinel
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=15s
+Persistent=true
+RandomizedDelaySec=5s
+Unit=bdag-stack-sentinel.service
+
+[Install]
+WantedBy=timers.target

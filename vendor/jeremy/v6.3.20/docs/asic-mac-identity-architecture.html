@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ASIC MAC Identity Architecture</title>
+  <style>
+    :root { color-scheme: dark light; --bg:#101318; --panel:#171c23; --line:#344052; --text:#eef3f8; --muted:#aeb8c5; --accent:#62d0a4; --warn:#f2c14e; --bad:#ff6b6b; --code:#d7f5ff; }
+    body { margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); line-height:1.55; }
+    main { max-width:1080px; margin:0 auto; padding:28px 20px 52px; }
+    h1 { margin:0 0 8px; font-size:2rem; }
+    h2 { margin-top:28px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+    code, pre { color:var(--code); background:#0b0e13; border:1px solid var(--line); border-radius:6px; }
+    code { padding:1px 5px; }
+    pre { padding:12px; overflow:auto; }
+    table { width:100%; border-collapse:collapse; margin:14px 0; }
+    th, td { border:1px solid var(--line); padding:9px 10px; vertical-align:top; }
+    th { background:#202632; text-align:left; }
+    .lede { color:var(--muted); max-width:920px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:8px; padding:14px; margin:14px 0; }
+    .warn { border-left-color:var(--warn); }
+    .bad { border-left-color:var(--bad); }
+  </style>
+  <script id="agent-metadata" type="application/json">
+  {
+    "document_type": "architecture_decision",
+    "decision": "physical ASIC miners and ASIC work lanes use MAC identity only",
+    "created": "2026-06-08",
+    "repo": "pool-stack-docker",
+    "identity_key_format": "mac:<normalized-mac>",
+    "common_source": "stack miner registry",
+    "pool_projection": "POOL_ASIC_MAC_OVERRIDES",
+    "status": "accepted",
+    "tests": [
+      "ops/tests/test_miner_retirement_identity.py",
+      "ops/tests/test_status_sampler_mining_imperative.py",
+      "ops/tests/test_watchdog_miner_source_counts.py",
+      "ops/tests/test_mining_guard_30min.py",
+      "ops/tests/test_stack_naming_coherence.py"
+    ]
+  }
+  </script>
+</head>
+<body>
+  <main>
+    <h1>ASIC MAC Identity Architecture</h1>
+    <p class="lede">This decision makes normalized MAC address the only durable identity for physical ASIC miners and ASIC work lanes across the BlockDAG pool stack.</p>
+
+    <section class="card">
+      <h2>Decision</h2>
+      <p>Physical ASIC miners and ASIC work lanes are identified only as <code>mac:&lt;normalized-mac&gt;</code>. IP addresses, Stratum ports, worker names, wallet addresses, display names, and pool-log connection suffixes are observations or payout fields, not ASIC identities.</p>
+      <p><code>BDAG_ASIC_EXPECTED_MACS</code> is the canonical expected physical ASIC lane list. The stack miner registry overlays that MAC-only list onto current observations, then projects current route-to-MAC observations into the pool through <code>POOL_ASIC_MAC_OVERRIDES</code> and passes the physical ASIC LAN scope through <code>BDAG_ASIC_LAN_CIDRS</code>. The pool uses that projection to expose active local ASIC lanes as MAC lanes. The dashboard consumes registry and pool MAC lane data; it must not invent a different ASIC identity.</p>
+    </section>
+
+    <section>
+      <h2>Identity Contract</h2>
+      <table>
+        <thead><tr><th>Concept</th><th>Allowed Role</th><th>Not Allowed</th></tr></thead>
+        <tbody>
+          <tr><td>MAC address</td><td>Durable physical ASIC identity, <code>BDAG_ASIC_EXPECTED_MACS</code> lane entry, registry key, expected lane key, watchdog stall/cooldown key, earnings/history ASIC merge key.</td><td>None for physical ASIC identity.</td></tr>
+          <tr><td>IP address</td><td>Observed route used to contact ASIC HTTP/Stratum endpoints and build the current <code>POOL_ASIC_MAC_OVERRIDES</code> projection. Remote Stratum clients outside <code>BDAG_ASIC_LAN_CIDRS</code> may use IP-based operational identity.</td><td>ASIC registry key, dashboard identity key, expected work lane, watchdog state key, display suffix, earnings/history merge key for physical ASICs on the mining LAN.</td></tr>
+          <tr><td>Worker or wallet</td><td>Payout and credit attribution context.</td><td>Physical ASIC identity or lane identity.</td></tr>
+          <tr><td>Stratum port or extranonce suffix</td><td>Current connection/job correlation inside the bounded pool-log window.</td><td>Durable ASIC identity or stale lane ownership after reconnect.</td></tr>
+          <tr><td>Display name</td><td>Optional operator label rendered with a MAC suffix.</td><td>Identity key or uniqueness proof.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card warn">
+      <h2>Unknown MAC</h2>
+      <p>If a route in <code>BDAG_ASIC_LAN_CIDRS</code> cannot be resolved to a MAC address, do not promote it into a miner registry identity, work lane, earnings row, or watchdog state key. Count pool-log shares or blocks from that route as unattributed until the MAC is collected. The route may remain visible in diagnostics as <code>observed_ip</code> so an operator can find the device.</p>
+    </section>
+
+    <section>
+      <h2>Control Plane Flow</h2>
+      <ol>
+        <li>LAN discovery, ASIC API reads, neighbor table reads, and configured miner results collect current route observations.</li>
+        <li>The stack registry stores physical ASIC records only when a MAC address is known, and marks entries in <code>BDAG_ASIC_EXPECTED_MACS</code> as managed lanes even if their route changes.</li>
+        <li><code>pool_asic_mac_overrides_value()</code> builds derived <code>ip=mac</code> projection entries from verified registry rows. This is a route map, not the authoritative lane list.</li>
+        <li>Compose passes <code>BDAG_ASIC_LAN_CIDRS</code> into the pool so unresolved local ASIC routes cannot become IP lanes.</li>
+        <li>The status sampler keeps <code>POOL_ASIC_MAC_OVERRIDES</code> in runtime env and recreates the pool container when the projection changes.</li>
+        <li>The pool reports each ASIC connection as a MAC lane. The dashboard and watchdog consume those MAC identities.</li>
+      </ol>
+    </section>
+
+    <section class="card bad">
+      <h2>Rejected Patterns</h2>
+      <p>Do not add local ASIC fallbacks such as <code>ip:&lt;address&gt;</code>, inferred ASIC names from route addresses, expected-lane IDs from route addresses, or watchdog cooldown maps keyed by route address. Those patterns caused a live failure where multiple ASICs sharing one wallet were visible but useful work was attributed to only one apparent lane. The only IP identity exception is for remote Stratum clients outside the configured ASIC LAN.</p>
+    </section>
+
+    <section>
+      <h2>Validation</h2>
+      <pre><code>PYTHONDONTWRITEBYTECODE=1 python3 -m pytest \
+  ops/tests/test_miner_retirement_identity.py \
+  ops/tests/test_status_sampler_mining_imperative.py \
+  ops/tests/test_watchdog_miner_source_counts.py \
+  ops/tests/test_mining_guard_30min.py \
+  ops/tests/test_stack_naming_coherence.py
+
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/validate-stack-defaults.py
+BDAG_RUNTIME_DIR=/tmp/bdag-stack-validate-runtime PYTHONDONTWRITEBYTECODE=1 scripts/validate-pi5-restart-hardening.sh</code></pre>
+    </section>
+  </main>
+</body>
+</html>

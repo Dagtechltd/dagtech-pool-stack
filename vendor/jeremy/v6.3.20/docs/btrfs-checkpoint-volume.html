@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>BlockDAG Btrfs Checkpoint Volume Requirement</title>
+  <style>
+    body { font-family: system-ui, sans-serif; line-height: 1.5; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #1f2933; }
+    code { background: #eef2f7; padding: 0.1rem 0.25rem; border-radius: 4px; }
+    pre { background: #111827; color: #f9fafb; padding: 1rem; overflow-x: auto; border-radius: 6px; }
+    h1, h2 { line-height: 1.2; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { border: 1px solid #d8dee9; padding: 0.5rem; text-align: left; vertical-align: top; }
+    th { background: #f5f7fa; }
+  </style>
+</head>
+<body>
+  <script type="application/json" id="agent-metadata">
+  {
+    "document_type": "bdag_btrfs_checkpoint_volume_requirement_v1",
+    "created_for": "BlockDAG mining stack trusted IPFS recovery",
+    "source_branch": "origin/jeremy-dev",
+    "default_mount": "./data-restore/btrfs-checkpoints",
+    "minimum_size_gib": 128,
+    "invariants": [
+      "mainnet only",
+      "IPFS is transport; signatures and chain anchors provide trust",
+      "raw checkpoint paths must be snapshot-capable when BDAG_IPFS_STATE_CHECKPOINT_REQUIRED=1"
+    ]
+  }
+  </script>
+
+  <h1>Btrfs Checkpoint Volume Requirement</h1>
+  <p>
+    The BlockDAG stack uses IPFS as the recovery transport for signed raw
+    datadir checkpoints and append-only chain-order segments. IPFS content
+    addressing makes objects immutable once published, but it does not make a
+    hot filesystem copy safe by itself. The stack therefore needs a local
+    checkpoint substrate that can preserve cheap point-in-time generations
+    before sealing and publishing recovery artifacts.
+  </p>
+
+  <h2>Default Install Behavior</h2>
+  <p>
+    On Linux, <code>ops/release-install.sh</code> installs <code>btrfs-progs</code>
+    when needed, creates a loop-backed btrfs image by default, adds an
+    <code>/etc/fstab</code> entry, mounts it at
+    <code>./data-restore/btrfs-checkpoints</code>, and creates the sidecar
+    directories under that mount. The default image is 128 GiB and the installer
+    refuses to create it unless the image filesystem can retain the configured
+    free-space reserve afterward.
+  </p>
+
+  <table>
+    <thead>
+      <tr><th>Purpose</th><th>Default Path</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Mutable low-priority raw sidecar</td><td><code>./data-restore/btrfs-checkpoints/rawdatadir-sidecar/mainnet</code></td></tr>
+      <tr><td>Signed sealed raw artifacts</td><td><code>./data-restore/btrfs-checkpoints/rawdatadir-artifacts</code></td></tr>
+      <tr><td>Chunked raw content for IPFS publication</td><td><code>./data-restore/btrfs-checkpoints/rawdatadir-sidecar-content</code></td></tr>
+      <tr><td>Open restore generations</td><td><code>./data-restore/btrfs-checkpoints/rawdatadir-sidecar-open/mainnet</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Why This Is Required</h2>
+  <p>
+    The live node database may remain on ext4, F2FS, XFS, or another suitable
+    chain-data filesystem. The recovery sidecar is different: it must support
+    cheap checkpoint generations so the stack can keep recent restore points,
+    sign and verify raw checkpoint artifacts, and publish to IPFS without
+    repeatedly full-copying the chain or competing aggressively with mining I/O.
+  </p>
+  <p>
+    When <code>BDAG_IPFS_STATE_CHECKPOINT_REQUIRED=1</code>, preflight treats
+    ext4-only sidecar/artifact/open-restore paths as a deployment blocker. A
+    native btrfs, ZFS, or LVM-backed checkpoint volume is acceptable when the
+    operator configures the paths explicitly; otherwise the installer provisions
+    the loop-backed btrfs volume.
+  </p>
+
+  <h2>Trust Boundary</h2>
+  <p>
+    IPFS CIDs are immutable content addresses. They are not enough on their own
+    to prove chain correctness. A raw checkpoint is usable only after its
+    manifest root, file/chunk hashes, Ed25519 signature, mainnet metadata,
+    trusted signer roster, and chain-anchor evidence pass verification. Consumers
+    must still validate restored data against normal chain consensus before
+    mining on it.
+  </p>
+
+  <h2>Operational Checks</h2>
+  <pre><code>findmnt ./data-restore/btrfs-checkpoints
+./scripts/mining-appliance-preflight.py --root . --env-file .env --warn-only --enforce-blockers
+systemctl --user status bdag-rawdatadir-sidecar.timer bdag-ipfs-content-sidecar.timer</code></pre>
+</body>
+</html>

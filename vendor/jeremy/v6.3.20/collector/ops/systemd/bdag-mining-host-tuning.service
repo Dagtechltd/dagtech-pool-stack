@@ -1,0 +1,13 @@
+[Unit]
+Description=Apply passive BlockDAG mining host latency tuning
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+Environment=BDAG_PROJECT_ROOT=/home/jeremy/blockdag-asic-pool
+EnvironmentFile=-/etc/default/bdag-mining-host-tuning
+ExecStart=/usr/local/sbin/bdag-apply-mining-host-tuning
+
+[Install]
+WantedBy=multi-user.target

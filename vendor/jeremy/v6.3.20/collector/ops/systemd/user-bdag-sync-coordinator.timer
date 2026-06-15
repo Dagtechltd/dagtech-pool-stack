@@ -1,0 +1,13 @@
+[Unit]
+Description=Run BlockDAG sync coordinator during large catch-up
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=30s
+Persistent=true
+Unit=bdag-sync-coordinator.service
+
+[Install]
+WantedBy=timers.target
+

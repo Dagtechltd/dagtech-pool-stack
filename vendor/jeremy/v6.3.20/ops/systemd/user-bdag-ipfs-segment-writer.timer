@@ -1,0 +1,13 @@
+[Unit]
+Description=Run BlockDAG low-priority IPFS segment writer
+
+[Timer]
+OnBootSec=5m
+OnActiveSec=5m
+OnUnitActiveSec=5m
+RandomizedDelaySec=2m
+Persistent=false
+Unit=bdag-ipfs-segment-writer.service
+
+[Install]
+WantedBy=timers.target

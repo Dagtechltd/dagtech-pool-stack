@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlockDAG IPFS Append-Only Segment Protocol</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --panel: #151b24;
+      --panel-2: #1d2633;
+      --panel-3: #101722;
+      --text: #eef3f8;
+      --muted: #a8b3c4;
+      --line: #303b4d;
+      --accent: #67d4ad;
+      --info: #82b7ff;
+      --warn: #f5c45e;
+      --bad: #ff7c7c;
+      --code: #d7f5ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header, main { max-width: 1240px; margin: 0 auto; }
+    header { padding: 30px 22px 18px; }
+    main { padding: 0 22px 58px; }
+    h1 { margin: 0 0 8px; font-size: 30px; line-height: 1.15; letter-spacing: 0; }
+    h2 { margin: 30px 0 12px; padding-bottom: 7px; border-bottom: 1px solid var(--line); }
+    h3 { margin: 18px 0 8px; color: var(--accent); }
+    p { margin: 0 0 12px; }
+    ul, ol { margin-top: 8px; padding-left: 22px; }
+    li { margin: 5px 0; }
+    a { color: var(--info); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre {
+      background: #090d13;
+      color: var(--code);
+      border: 1px solid #263142;
+      border-radius: 6px;
+    }
+    code { padding: 1px 5px; font-size: 12px; }
+    pre { padding: 12px; overflow: auto; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); margin: 14px 0; }
+    th, td { border-bottom: 1px solid var(--line); padding: 10px 12px; text-align: left; vertical-align: top; }
+    th { background: var(--panel-2); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    tr:last-child td { border-bottom: 0; }
+    .lede { color: var(--muted); max-width: 980px; }
+    .grid { display: grid; gap: 12px; }
+    .cards-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cards-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+    .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .value { margin-top: 4px; font-size: 20px; font-weight: 740; }
+    .chip { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; background: #0c121b; padding: 3px 9px; color: var(--muted); font-size: 12px; margin: 0 5px 5px 0; }
+    .good { color: var(--accent); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    .callout { margin: 14px 0; padding: 14px 16px; border-left: 4px solid var(--accent); background: #101b17; border-radius: 6px; }
+    .warn-callout { border-left-color: var(--warn); background: #1d1a10; }
+    .bad-callout { border-left-color: var(--bad); background: #211318; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    @media (max-width: 900px) {
+      header { padding: 22px 16px 12px; }
+      main { padding: 0 16px 44px; }
+      .cards-3, .cards-2 { grid-template-columns: 1fr; }
+    }
+  </style>
+  <script type="application/json" id="agent-metadata">
+  {
+    "document_type": "bdag_ipfs_append_only_segment_protocol_v1",
+    "created_at": "2026-05-31T21:10:00+02:00",
+    "source_repo": "/home/jeremy/blockdag-source/stack-ipfs-sidecar-current",
+    "live_stack": "/home/jeremy/blockdag-asic-pool",
+    "stable_latest_ipns": "/ipns/k51qzi5uqu5djjlh4vxtmzyswx0qk4s3wdlf3yrpkszp38gq5sl71zcgmmc3jk",
+    "last_verified_runtime_index_cid": "bafkreicyj5hvy33qc5qtikgyfthhbhgtphkbscyp7rz5vz24tyqc37sksi",
+    "last_verified_runtime_head_order": 10500890,
+    "last_verified_runtime_at": "2026-06-09T23:45:36+02:00",
+    "recommended_next_phase": "Backfill earlier history, add a real segment-to-node import path, and expand the signed deterministic writer roster beyond the bootstrap seed.",
+    "safety_rule": "IPFS is never allowed to gate mining. Segment build and publish retries are low-priority background work and must defer under mining pressure.",
+    "independent_reference_requirement": "Trusted chain-order segment publication requires an independent native BlockDAG chain RPC that supports getBlockByOrder. Public EVM RPC endpoints can be useful anchors, but they cannot prove raw chain-order segment bytes by themselves."
+  }
+  </script>
+</head>
+<body>
+<header>
+  <h1>BlockDAG IPFS Append-Only Segment Protocol</h1>
+  <p class="lede">Design for using small immutable chain-data segments, a stable IPNS latest pointer, deterministic writer election, and validation rules that let any honest node reproduce and verify the data.</p>
+  <span class="chip good">Status: bootstrap seed with deterministic roster support</span>
+  <span class="chip">Segment target: about 5 minutes</span>
+    <span class="chip">Trust: signed indexes plus consensus verification</span>
+  <span class="chip">Mining impact: low-priority only</span>
+</header>
+<main>
+  <section>
+    <h2>Current Runtime Decision</h2>
+    <div class="grid cards-3">
+      <article class="card">
+        <div class="label">Stable latest pointer</div>
+        <div class="value mono">/ipns/k51qzi5uqu5djjlh4vxtmzyswx0qk4s3wdlf3yrpkszp38gq5sl71zcgmmc3jk</div>
+      </article>
+      <article class="card">
+        <div class="label">Index CID at first publish</div>
+        <div class="value mono">bafkreifvqj7qhkoifykybbvlxxmq3jhydgzq2kjxuq5fznjizjjogzgthi</div>
+      </article>
+      <article class="card">
+        <div class="label">Segment count</div>
+        <div class="value">2</div>
+      </article>
+    </div>
+    <p>The active discovery file is <code>ops/ipfs-content-discovery.json</code>. It records the stable IPNS name, the current immutable segment-index CID, and the resolver-cache warning. Fresh consumers should verify the IPNS result against the discovery file and then verify the index and segments themselves.</p>
+    <p>The stable IPNS name is permanent only if it is maintained. This host's <code>bdag-ipfs-segment-writer.timer</code>, <code>bdag-ipfs-content-sidecar.timer</code>, and <code>bdag-rawdatadir-sidecar.timer</code> now run every five minutes at low CPU and idle IO priority. The chain-order segment writer is allowed to checkpoint already-imported finalized data during catch-up, because it reads bounded RPC ranges and writes immutable IPFS objects. Raw datadir copying, raw datadir sealing, and raw datadir content publication remain subordinate to sync priority, mining readiness, and host I/O pressure unless a source is explicitly quiesced or snapshotted.</p>
+    <p>The segment writer publishes one finalized 300-order segment per timer tick by default. Every new index CID now records <code>previous_index_cid</code>, <code>previous_index_link</code>, and <code>append_only_index_policy</code> so that a consumer can walk backward through immutable index versions instead of trusting the mutable latest pointer. Indexes and manifests are signed with an Ed25519 writer identity provisioned by <code>ops/ipfs_segment_identity.py</code>. If the stored live-tail head is stale by more than <code>BDAG_IPFS_SEGMENT_STALE_HEAD_MAX_LAG_ORDERS</code>, the writer starts a new near-tip live-tail epoch and records the old head under deprecated history. The new epoch remains internally contiguous and explicitly marks earlier history as incomplete until verified backfill or a signed checkpoint fills it.</p>
+    <p>New deployments provision a local writer key, add the writer to the roster, and require signatures by default. The same key file signs raw-datadir checkpoint artifacts through <code>BDAG_RAWDATADIR_SIGNING_KEY_FILE</code>, so a node has one local archive identity instead of separate unaudited signing roots. A node may publish chain-order segments only when it is the deterministic writer for the finalized range and its signature verifies against the trusted writer map. Local bootstrap publication without an independent reference RPC is no longer the default; a seed host must enable it explicitly and receivers must still treat those objects as transport evidence until consensus validation passes. Earlier history before the first verified segment still needs backfill before this is a full segment-replay source.</p>
+    <div class="callout warn-callout">
+      <p><strong>Independent reference rule:</strong> a trusted chain-order segment publish needs a second native BlockDAG RPC that supports <code>getBlockByOrder</code> for the exact order range being published. Tip-only native methods such as <code>getBlockTotal</code> or <code>getBlockCount</code> can identify height, but they are not enough to prove raw chain-order segment payloads. Public EVM RPCs and explorers are useful for anchoring EVM-visible state, but they do not prove the raw chain-order segment payload. When every configured reference lacks native chain-order methods, the writer must defer instead of publishing weaker evidence.</p>
+      <p>For unattended production installs, provision a reachable native reference node or a managed SSH tunnel to one during setup with <code>ops/setup_native_reference_rpc.py</code>. The tunnel should expose only localhost on the mining host and should be monitored the same way as the sidecar timers. Successful setup writes <code>BDAG_CHAIN_REFERENCE_RPC_URL</code>, <code>BDAG_IPFS_SEGMENT_REFERENCE_RPC_URL</code>, and <code>BDAG_IPFS_RESTORE_CHAIN_REFERENCE_RPC_URL</code>; failed setup leaves the writer fail-closed.</p>
+    </div>
+    <p><code>ops/restore-rawdatadir-segment-artifact.py</code> is the current destructive IPFS bootstrap path for an empty node datadir. It restores only <code>raw_datadir_checkpoint</code> artifacts whose manifest signature verifies against <code>BDAG_RAWDATADIR_TRUSTED_SIGNERS</code>, whose manifest root matches, and whose chunks/files match their declared SHA-256 values. <code>ops/ipfs_restore_drill.py</code> is the read-only consumer drill for chain-order segments. It fetches an index, manifests, and payloads from IPFS, verifies signatures, recursive previous-index lineage, CIDs, sha256 links, manifest chaining, raw-block hashes, and order continuity, and writes a local drill report without mutating chain data. Fresh installs can reconstruct raw datadir artifacts now; chain-order segment replay remains disabled until an importer and scratch-node validation path are implemented.</p>
+  </section>
+
+  <section>
+    <h2>Trust Boundary</h2>
+    <div class="callout">
+      IPFS gives immutable content addressing, not automatic blockchain truth. A CID proves the bytes fetched are the bytes named by that CID. It does not prove those bytes are canonical chain history until the manifest, hashes, order continuity, writer eligibility, and normal chain consensus checks pass.
+    </div>
+    <p>The user assumption is correct with this boundary: once a segment, manifest, or index is written under a CID, that exact object cannot be silently changed. Any byte change produces a different CID. The latest pointer is different: IPNS is intentionally mutable and only helps a node discover the current index. Therefore IPNS must never be treated as authority by itself.</p>
+    <p>The durable rule is: resolve IPNS only to find a candidate latest index, then verify the object type before choosing a restore path. Raw datadir restore accepts only a <code>bdag_ipfs_content_index_v1</code> or artifact CID that leads to a signed <code>raw_datadir_checkpoint</code>. Chain-order segment catch-up accepts only a <code>bdag_ipfs_segment_index_v1</code> and then recursively verifies <code>previous_index_cid</code> links, segment manifests, payload CIDs, sha256 values, order continuity, and normal chain consensus. Availability is a separate concern and requires local pins, remote pins, or enough provider nodes to keep the CIDs reachable.</p>
+  </section>
+
+  <section>
+    <h2>Research Facts</h2>
+    <table>
+      <thead><tr><th>Fact</th><th>Design impact</th><th>Primary source</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>IPFS CIDs are content addresses. A different byte changes the CID, while identical content added with the same settings gives the same CID.</td>
+          <td>Segments must be canonical and deterministic so two honest writers produce the same CID for the same chain range.</td>
+          <td><a href="https://docs.ipfs.tech/concepts/content-addressing/">IPFS content addressing</a></td>
+        </tr>
+        <tr>
+          <td>IPFS data is represented as content-addressed blocks and Merkle DAGs; retrieval verifies blocks by hashing.</td>
+          <td>Segments should be split into blocks/CARs/manifests, not a single mutable file. Receivers must hash and verify every part.</td>
+          <td><a href="https://docs.ipfs.tech/concepts/how-ipfs-works/">How IPFS works</a></td>
+        </tr>
+        <tr>
+          <td>IPNS is a mutable, self-certifying name that can point to an immutable <code>/ipfs/&lt;cid&gt;</code> path. It has sequence, validity, and TTL tradeoffs.</td>
+          <td>IPNS should point only to the latest index. It is a convenience pointer, not authority. The index chain, CID links, hashes, and consensus validation carry truth.</td>
+          <td><a href="https://docs.ipfs.tech/concepts/ipns/">IPNS docs</a> and <a href="https://specs.ipfs.tech/ipns/ipns-record/">IPNS record spec</a></td>
+        </tr>
+        <tr>
+          <td>CAR files serialize IPLD blocks with root CIDs and are suited to moving content-addressed DAG data.</td>
+          <td>Use CAR or CAR-like deterministic bundles for segment payloads so pieces can be fetched, verified, and imported independently.</td>
+          <td><a href="https://ipld.io/specs/transport/car/carv1/">IPLD CARv1 spec</a></td>
+        </tr>
+        <tr>
+          <td>Gossipsub supports fast pubsub propagation with peer scoring and application-specific validation.</td>
+          <td>Use pubsub only for advisory segment intent/proposal announcements. Consensus safety still comes from deterministic eligibility and manifest validation.</td>
+          <td><a href="https://github.com/libp2p/specs/blob/master/pubsub/gossipsub/gossipsub-v1.1.md">libp2p gossipsub v1.1 spec</a></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Mental Model</h2>
+    <p>Think of the chain archive as a notebook made from sealed pages. Each page covers a small finalized range of the blockchain, roughly five minutes. Once a page is written, its CID is its fingerprint; changing a single byte creates a different fingerprint. The index is the table of contents. IPNS is the signpost that says where the latest table of contents is today.</p>
+    <p>New nodes do not need one huge file. They resolve the signpost, fetch the latest table of contents, fetch pages in order, verify every page, and then use normal node consensus to catch up from the end of the last verified page.</p>
+  </section>
+
+  <section>
+    <h2>Object Model</h2>
+    <table>
+      <thead><tr><th>Object</th><th>Mutability</th><th>Contents</th><th>Verifier rule</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>segment payload</code></td>
+          <td>Immutable CID</td>
+          <td>Canonical chain data for one finalized order range. Prefer CAR for IPLD blocks or deterministic compressed chunks with explicit chunk hashes.</td>
+          <td>Hash each chunk, import into a scratch verifier, confirm block/order continuity and final state roots.</td>
+        </tr>
+        <tr>
+          <td><code>segment manifest</code></td>
+          <td>Immutable CID</td>
+          <td>Network/genesis, segment id, start/end orders, start/end hashes, previous segment CID, payload CIDs, chunk hashes, state roots, build algorithm, and election evidence.</td>
+          <td>Validate schema, election eligibility, hash links, payload CIDs, and consensus compatibility before accepting.</td>
+        </tr>
+        <tr>
+          <td><code>segment index</code></td>
+          <td>Immutable CID per version</td>
+          <td>Append-only ordered list of segment manifest CIDs plus index sequence, current head, deprecated content, <code>previous_index_cid</code>, and <code>previous_index_link</code>.</td>
+          <td>Only accept append-only transitions from the previous known index. Recursively verify previous index CIDs. Never delete or rewrite accepted segment history.</td>
+        </tr>
+        <tr>
+          <td><code>IPNS latest pointer</code></td>
+          <td>Mutable IPNS record</td>
+          <td>Pointer to the latest segment-index CID.</td>
+          <td>Use as discovery only. A stale IPNS value is not a consensus failure; compare sequence/head and verify recursive index lineage.</td>
+        </tr>
+        <tr>
+          <td><code>publisher registry</code></td>
+          <td>Append-only, ideally on-chain</td>
+          <td>Binding from block reward/coinbase address to IPFS publisher signing key, endpoint hints, and optional weight/capability metadata.</td>
+          <td>Only keys registered before the segment election anchor may publish for that segment.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Segment Boundaries</h2>
+    <ol>
+      <li>Use finalized canonical block order, not local wall-clock time, as the source of truth.</li>
+      <li>Segment <code>N</code> starts at <code>previous_segment.end_order + 1</code>. There can be no gaps and no overlaps.</li>
+      <li>The target segment window is the first contiguous finalized range whose block timestamps span about <code>300s</code>, capped by a maximum payload size such as <code>64-256 MiB</code> before compression. The exact cap must be a network parameter.</li>
+      <li>If the next range is not finalized, the node waits and retries. This is lazy background work and must not block mining or node catch-up.</li>
+      <li>All serialization is canonical: sorted keys for JSON test artifacts, DAG-CBOR for production manifests, fixed compression settings, fixed chunk size, and stable file order.</li>
+    </ol>
+    <div class="callout">
+      Contention is made harmless by determinism. If two honest nodes build the same segment from the same finalized range with the same encoder, they should produce the same payload CID and manifest CID. Validators accept the same payload root and choose the deterministic highest-priority valid manifest.
+    </div>
+  </section>
+
+  <section>
+    <h2>Writer Election</h2>
+    <p>The writer should be selected from data that every node can independently derive after finality. The implemented source-level rule is <code>rendezvous_sha256_v1</code> over <code>network || start_order || end_order || previous_manifest_cid || writer_id</code>. The highest score owns the primary slot for that immutable segment range. If no roster is configured, the local node is allowed to seed the archive until a roster exists.</p>
+    <h3>Definitions</h3>
+    <table>
+      <thead><tr><th>Name</th><th>Rule</th></tr></thead>
+      <tbody>
+        <tr><td><code>segment_id</code></td><td>Monotonic number in the append-only index.</td></tr>
+        <tr><td><code>segment_start_order</code></td><td>Previous segment end order plus one.</td></tr>
+        <tr><td><code>election_anchor_order</code></td><td>A finalized order before the segment starts, for example <code>segment_start_order - 1</code>. This lets nodes know the upcoming roster in advance.</td></tr>
+        <tr><td><code>lookback_window</code></td><td>A finalized canonical order range ending at the election anchor, for example the previous 1000 ordered blocks or previous 60 minutes.</td></tr>
+        <tr><td><code>eligible publisher</code></td><td>A reward/coinbase address that won at least one block in the lookback window and had a registry binding to an IPFS publisher key before the anchor.</td></tr>
+      </tbody>
+    </table>
+    <h3>Ranking</h3>
+    <pre>seed = hash(network_id || segment_id || election_anchor_hash || previous_segment_manifest_cid)
+rank_score = hash(seed || coinbase_address || publisher_key || win_count)
+rank eligible publishers by weighted rank_score, with win_count as bounded weight</pre>
+    <p>Rank 0 owns the first publish slot. Rank 1 owns the first fallback slot. Rank 2 owns the next fallback slot. After all ranked publishers miss their slots, any registered publisher may publish a recovery manifest, but validators still require the same canonical segment range and payload root.</p>
+    <h3>Slot Timing</h3>
+    <table>
+      <thead><tr><th>Slot</th><th>Earliest publish time</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>Rank 0</td><td>After segment end order is finalized and the local safe-copy check passes.</td><td>Normal deterministic writer.</td></tr>
+        <tr><td>Rank 1</td><td>Rank 0 grace period plus 60 seconds.</td><td>Fallback if the winner is offline, overloaded, or refuses.</td></tr>
+        <tr><td>Rank 2+</td><td>Additional 60-second slots.</td><td>Robust liveness under churn.</td></tr>
+        <tr><td>Open recovery</td><td>After ranked slots expire.</td><td>Any registered node may publish, but only valid deterministic content is accepted.</td></tr>
+      </tbody>
+    </table>
+    <p>Gossipsub messages such as <code>segment_intent</code>, <code>segment_candidate</code>, and <code>segment_accepted</code> reduce duplicate work, but they do not decide authority. Nodes reject gossip that fails schema, registry, rank, or segment validation.</p>
+  </section>
+
+  <section>
+    <h2>Validation Pipeline</h2>
+    <ol>
+      <li>Resolve the latest IPNS pointer, preferably uncached for freshness-sensitive sync.</li>
+      <li>Fetch the index CID and validate index schema, network, genesis, sequence, <code>previous_index_cid</code> lineage, and append-only continuity.</li>
+      <li>For each new segment, fetch the manifest CID and verify registry binding, deterministic election rank, fallback-slot timing, and previous-segment hash link.</li>
+      <li>Fetch payload chunks by CID. Verify chunk hashes and payload root.</li>
+      <li>Replay/import into a scratch verifier or deterministic importer. Confirm order continuity, parent links, state roots, EVM roots where available, and final segment head.</li>
+      <li>Only after verification, mark the segment usable locally and update local sync state.</li>
+      <li>Pin useful verified segments if the node has storage budget; otherwise keep a bounded cache and rely on provider discovery.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Restore Paths</h2>
+    <p><code>ops/restore-rawdatadir-segment-artifact.py</code> is the destructive raw-checkpoint restore path. It can read a local artifact directory, an SSH artifact directory, an IPFS raw artifact CID, or a <code>bdag_ipfs_content_index_v1</code> that names the raw artifact CID. It writes into the target datadir only after the artifact root, trusted Ed25519 signature, publishability metadata, chunk hashes, file hashes, path safety rules, and <code>mainnet</code> metadata pass. The release installer calls it before first start only when the node datadir is empty and a raw artifact/index source is configured.</p>
+    <p><code>ops/ipfs_restore_drill.py</code> is the phase-1 consumer boundary. It fetches a local index, a discovery-selected index CID, or fixture CIDs, then verifies every selected manifest and payload before writing <code>ops/runtime/ipfs-content/restore-drill-status.json</code>.</p>
+    <p>The drill is intentionally non-destructive. It never mutates the node datadir, never starts or stops mining services, and always records <code>usable_for_destructive_restore=false</code> until a separate importer can prove a reconstructed candidate with normal consensus validation. This keeps IPFS useful for automated install and recovery readiness without letting untrusted transport bytes become chain authority.</p>
+    <ul>
+      <li>Index checks: document type, <code>mainnet</code>, non-empty segments, contiguous orders, monotonic segment ids, and current-head consistency.</li>
+      <li>Manifest checks: network, segment metadata, payload CID, manifest SHA-256, payload SHA-256, payload format, and previous-manifest CID links.</li>
+      <li>Payload checks: canonical SHA-256, order continuity, start/end hash consistency, block count, and raw-block SHA-256 for each block.</li>
+      <li>Installer defaults: <code>BDAG_IPFS_RAWDATADIR_RESTORE_PRESTART=1</code> for configured raw artifacts, <code>BDAG_IPFS_RESTORE_MODE=verify</code> for chain-order segments, latest 16 segment checks, and no materialized segment candidate unless explicitly enabled.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Safe-Copy Rule</h2>
+    <p>Before any node updates an index or announces a segment as usable, it must perform the same safe-copy check that a receiver will perform:</p>
+    <ul>
+      <li>Re-fetch or re-open the segment by CID through local IPFS, not only from the builder's temporary output path.</li>
+      <li>Verify manifest, chunks, chain range, previous link, state root, and consensus compatibility.</li>
+      <li>Confirm the segment is pinned or otherwise locally protected before publishing the index update.</li>
+      <li>Write an atomic local status file with <code>safe=true</code>, <code>usable=true</code>, the segment CID, and the verified order range.</li>
+      <li>If any check fails, do not publish. Record the failure and retry later at low priority.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Mining Safety</h2>
+    <div class="callout bad-callout">
+      IPFS freshness is never allowed to gate mining, template creation, block submission, node catch-up, or ASIC recovery.
+    </div>
+    <p>The sidecar's default behavior is continuous lazy retry. It should run with low CPU and IO priority, pause or shrink work under sync priority, mining pressure, or host I/O pressure, and resume after pressure clears. If the elected writer is under pressure and misses its slot, the deterministic fallback writer takes over. The network keeps moving without blocking the mining path.</p>
+    <p>Chain-order segment checkpoints and raw datadir restore checkpoints have different safety boundaries. Segment checkpoints can be produced from finalized imported orders while the node continues catching up. Raw datadir checkpoints should be considered destructive-restore candidates only when produced from a stopped node, a filesystem snapshot, or another quiesced source; a hot rsync may be useful as a warm copy but must not be advertised as restore-safe without finalization evidence.</p>
+  </section>
+
+  <section>
+    <h2>Implementation Plan</h2>
+    <table>
+      <thead><tr><th>Phase</th><th>Scope</th><th>Acceptance criteria</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>0. Runtime correction</td>
+          <td>Publish the initial segment index through IPNS and pin it locally.</td>
+          <td>Discovery file points to segment index and the current index CID is pinned.</td>
+        </tr>
+        <tr>
+          <td>1. Single-publisher segments</td>
+          <td>Build canonical segment manifest/payload schema and local safe-copy verifier. This pool publishes first segments only from verified local data. Raw checkpoint restore uses signed <code>bdag_ipfs_content_index_v1</code> inputs until a segment replay importer exists.</td>
+          <td>Two independent local builds of the same range produce the same payload CID; raw IPFS checkpoint restore reconstructs an empty node datadir from a trusted artifact; segment importer remains explicitly disabled until scratch validation exists.</td>
+        </tr>
+        <tr>
+          <td>2. Publisher durability proposals</td>
+          <td>Add registry, gossipsub announcements, candidate manifest validation, and deterministic rank/fallback calculation.</td>
+          <td>Simulated offline rank-0 publisher falls back to rank 1 without conflicting accepted data.</td>
+        </tr>
+        <tr>
+          <td>3. On-chain commitment</td>
+          <td>Add optional or mandatory chain-visible commitment of segment manifest CID or publisher registry updates.</td>
+          <td>Receivers can bootstrap from IPFS and verify the segment head against chain-visible commitments.</td>
+        </tr>
+        <tr>
+          <td>4. Near-real-time operation</td>
+          <td>Enable continuous 5-minute segment production with bounded backlog catch-up and pressure-aware retries.</td>
+          <td>Under normal pressure, published segment head stays within one finalized segment window plus fallback grace.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Open Decisions</h2>
+    <ul>
+      <li>Pick exact finality signal: use current chain final block if exposed, otherwise a conservative order depth until finality is exposed directly for BlockDAG order.</li>
+      <li>Pick payload representation: CAR for IPLD-native blocks, or a deterministic raw block range bundle if the current node storage format is not IPLD-friendly yet.</li>
+      <li>Pick registry location: append-only registry in phase 1, on-chain registry or chain-committed registry root for phase 3.</li>
+      <li>Pick exact segment size cap after measuring current block payload density and import cost on this host and a constrained Pi.</li>
+      <li>Decide whether index publication remains a single pool-owned IPNS key or many publisher IPNS heads plus a deterministic merge rule.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Non-Negotiable Rules</h2>
+    <ul>
+      <li>Never require a node to trust IPFS, IPNS, a gateway, or a publisher without verifying chain data.</li>
+      <li>Never treat the mutable IPNS latest pointer as archive authority. It is only a discovery path to a candidate immutable index CID.</li>
+      <li>Never share one IPNS private key among all writers. Multi-writer authority must be deterministic validation, threshold signing, or chain-visible commitment.</li>
+      <li>Never mutate a segment. Append a new segment and a new index CID.</li>
+      <li>Never let segment building or publishing take priority over mining-critical CPU, IO, RPC, or network work.</li>
+      <li>Never accept a segment with gaps, overlaps, wrong genesis/network, wrong previous CID, invalid publisher election, or failed state-root verification.</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

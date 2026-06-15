@@ -1,0 +1,15 @@
+[Unit]
+Description=BlockDAG chain restore-point freshness guard
+After=default.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_PROJECT_ROOT=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_RUNTIME_DIR=/home/jeremy/blockdag-asic-pool/ops/runtime
+EnvironmentFile=-/home/jeremy/blockdag-asic-pool/ops/runtime/ops.env
+ExecStart=/usr/bin/env python3 /home/jeremy/blockdag-asic-pool/ops/chain_restore_guard.py
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=10
+IOWeight=10

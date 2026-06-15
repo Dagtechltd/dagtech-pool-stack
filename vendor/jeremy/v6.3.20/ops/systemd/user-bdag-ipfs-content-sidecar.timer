@@ -1,0 +1,13 @@
+[Unit]
+Description=Run BlockDAG lazy IPFS content sidecar
+
+[Timer]
+OnBootSec=5m
+OnActiveSec=5m
+OnUnitActiveSec=5m
+RandomizedDelaySec=2m
+Persistent=false
+Unit=bdag-ipfs-content-sidecar.service
+
+[Install]
+WantedBy=timers.target

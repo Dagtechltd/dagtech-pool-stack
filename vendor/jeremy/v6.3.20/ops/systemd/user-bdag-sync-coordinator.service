@@ -1,0 +1,16 @@
+[Unit]
+Description=BlockDAG large catch-up sync coordinator
+After=default.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_PROJECT_ROOT=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_RUNTIME_DIR=/home/jeremy/blockdag-asic-pool/ops/runtime
+EnvironmentFile=-/home/jeremy/blockdag-asic-pool/ops/runtime/ops.env
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUWeight=40
+IOWeight=30
+ExecStart=/usr/bin/python3 /home/jeremy/blockdag-asic-pool/ops/sync_coordinator.py --once --repair

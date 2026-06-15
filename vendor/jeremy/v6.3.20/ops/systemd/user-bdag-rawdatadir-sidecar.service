@@ -1,0 +1,13 @@
+[Unit]
+Description=BlockDAG raw datadir sidecar copy refresh
+After=default.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/bdag-rawdatadir-sidecar.env
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=10
+IOWeight=10
+MemoryHigh=2G
+ExecStart=/usr/bin/env bash -lc 'cd "${BDAG_PROJECT_ROOT:?set BDAG_PROJECT_ROOT in ~/.config/bdag-rawdatadir-sidecar.env}" && exec ./ops/maintain-rawdatadir-sidecar.sh'

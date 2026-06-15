@@ -1,0 +1,14 @@
+[Unit]
+Description=BlockDAG live chain pre-sync
+After=default.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_PROJECT_ROOT=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_PRESYNC_ONE_NODE=1
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=10
+IOWeight=10
+ExecStart=/home/jeremy/blockdag-asic-pool/ops/chain-presync.sh

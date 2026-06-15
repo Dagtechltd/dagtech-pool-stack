@@ -1,0 +1,13 @@
+[Unit]
+Description=BlockDAG local P2P peer discovery
+After=default.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/jeremy/blockdag-asic-pool
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUWeight=25
+IOWeight=25
+ExecStart=/home/jeremy/blockdag-asic-pool/ops/update-local-peers.py --apply

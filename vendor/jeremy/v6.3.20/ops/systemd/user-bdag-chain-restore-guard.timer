@@ -1,0 +1,13 @@
+[Unit]
+Description=Run BlockDAG chain restore-point freshness guard
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+RandomizedDelaySec=20s
+Unit=bdag-chain-restore-guard.service
+
+[Install]
+WantedBy=timers.target

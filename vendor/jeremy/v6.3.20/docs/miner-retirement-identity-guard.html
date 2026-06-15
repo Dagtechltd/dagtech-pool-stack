@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Miner Retirement Identity Guard</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0d1117; --panel:#151b24; --line:#303b4d; --text:#eef3f8; --muted:#a8b3c4; --good:#75d28d; --warn:#f5c45e; --accent:#82b7ff; --code:#d7f5ff; }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.55 system-ui,-apple-system,Segoe UI,sans-serif; }
+    main { max-width:1050px; margin:0 auto; padding:28px 22px 56px; }
+    h1 { margin:0 0 8px; font-size:30px; line-height:1.15; }
+    h2 { margin-top:28px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+    p { color:var(--muted); }
+    table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); }
+    th, td { padding:10px; border-bottom:1px solid var(--line); vertical-align:top; text-align:left; }
+    th { background:#1d2633; }
+    code { color:var(--code); background:#090d13; border:1px solid #263142; border-radius:6px; padding:1px 5px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin:16px 0; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+    .good { color:var(--good); font-weight:700; }
+    .warn { color:var(--warn); font-weight:700; }
+  </style>
+  <script type="application/json" id="agent-metadata">
+  {
+    "document_type": "release_candidate_failure_mode",
+    "failure_mode_id": "STACK-P1-MINER-RETIREMENT-IP-CONFLICT-20260524",
+    "created_at": "2026-05-24T19:33:58+02:00",
+    "release_branch": "release/pool-stack-20260524-rc4-sre",
+    "source_repo": "/home/jeremy/blockdag-source/pool-stack-docker",
+    "live_repo": "/home/jeremy/blockdag-asic-pool",
+    "status": "mitigated_in_live_ops_source_and_added_to_rc_candidate",
+    "identity_policy": "mac_only",
+    "owner": "dashboard_watchdog_pool_ops_identity_filter"
+  }
+  </script>
+</head>
+<body>
+<main>
+  <h1>Miner Retirement Identity Guard</h1>
+  <p>RCA and release-candidate mitigation for the 2026-05-24 Athena count mismatch: the pool had five active miners while dashboard/audit displayed four.</p>
+
+  <div class="grid">
+    <section class="card"><strong class="warn">Failure</strong><p>Retired IP fallback hid an active Stratum client at <code>192.168.1.102</code>.</p></section>
+    <section class="card"><strong>Root Cause</strong><p>The filter treated an IP address as persistent ASIC identity. IP addresses and workers are ephemeral observations; only MAC address is a permanent miner identity.</p></section>
+    <section class="card"><strong class="good">Mitigation</strong><p>Only a MAC match can retire an ASIC. IP and worker matches are kept as observations and cannot suppress an active miner by themselves.</p></section>
+  </div>
+
+  <h2>Evidence</h2>
+  <table>
+    <tr><th>Signal</th><th>Observation</th></tr>
+    <tr><td>Pool metrics</td><td><code>pool_active_connections=5</code>, <code>pool_job_health_authorized_miners=5</code>, and <code>pool_job_health_ready_miners=5</code>.</td></tr>
+    <tr><td>Runtime filter</td><td><code>miner-retirements.json</code> still contained Athena with old MAC <code>28:e2:97:4c:e4:0a</code> and IP <code>192.168.1.102</code>.</td></tr>
+    <tr><td>Current active observations</td><td>Athena was submitting from <code>192.168.1.102</code> with current neighbor MAC <code>2a:71:c7:f5:1f:1e</code> and current pool worker <code>0x05518E03e148C56e426ff9e1CBdB962B4FC5250A</code>.</td></tr>
+    <tr><td>Immediate fix</td><td>The stale Athena retirement row was removed from live <code>ops/runtime/miner-retirements.json</code>; audit returned to five tracked, connected, and ok miners.</td></tr>
+  </table>
+
+  <h2>Release-Candidate Fix</h2>
+  <table>
+    <tr><th>File</th><th>Change</th></tr>
+    <tr><td><code>ops/pool_ops.py</code></td><td>Added structured retired-miner identity decisions. A same MAC retires the miner. IP and worker observations never retire, suppress, reintroduce, rename, or mark a miner as a new device by themselves.</td></tr>
+    <tr><td><code>ops/tests/test_miner_retirement_identity.py</code></td><td>Regression tests cover active different MAC at an observed retired IP, authoritative same-MAC retirement, IP-without-MAC observation behavior, and worker-without-MAC observation behavior.</td></tr>
+    <tr><td><code>scripts/validate-release-build.sh</code></td><td>Release validation keeps the release-build contract focused on the bootstrap and runtime payload path; MAC-only identity coverage remains in the source tests.</td></tr>
+    <tr><td><code>/home/jeremy/blockdag-source/SOURCE_ACCESS_IMPROVEMENT_BACKLOG.md</code></td><td>Backlog item <code>STACK-P1-MINER-RETIREMENT-IP-CONFLICT-20260524</code> records RCA, owner, acceptance criteria, and evidence.</td></tr>
+  </table>
+
+  <h2>Acceptance Criteria</h2>
+  <table>
+    <tr><th>Case</th><th>Expected Behavior</th></tr>
+    <tr><td>Same MAC as a retired row</td><td>Remain retired and hidden from local miner accounting.</td></tr>
+    <tr><td>Same IP without MAC evidence</td><td>Keep the miner visible, count it, and emit a warning because IP is only an observation.</td></tr>
+    <tr><td>Same worker without MAC evidence</td><td>Keep the miner visible. Worker labels are accounting/routing observations, not ASIC identity.</td></tr>
+    <tr><td>Different MAC at an observed retired IP</td><td>Keep the miner visible, count it, and emit a warning so the operator can reconcile retirement metadata.</td></tr>
+  </table>
+
+  <h2>Related Count Guard</h2>
+  <table>
+    <tr><th>Case</th><th>Expected Behavior</th></tr>
+    <tr><td>Tracked unmanaged miners with <code>status=ok</code></td><td>Contribute to <code>miner_health.ok_count</code>.</td></tr>
+    <tr><td>Managed-only health count</td><td>Expose separately as <code>managed_ok_count</code> so the public <code>ok_count</code> label matches visible miner row status.</td></tr>
+  </table>
+</main>
+</body>
+</html>

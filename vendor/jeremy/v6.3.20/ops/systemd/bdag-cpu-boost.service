@@ -1,0 +1,13 @@
+[Unit]
+Description=BlockDAG mining CPU latency boost
+After=power-profiles-daemon.service
+Wants=power-profiles-daemon.service
+
+[Service]
+Type=oneshot
+Environment=BDAG_CPU_MIN_PERF_PCT=40
+ExecStart=/home/jeremy/blockdag-asic-pool/ops/apply-mining-cpu-boost.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=BlockDAG lazy IPFS content sidecar
+After=default.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/bdag-ipfs-content-sidecar.env
+WorkingDirectory=%h
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=10
+IOWeight=10
+MemoryHigh=2G
+ExecStart=/usr/bin/env bash -lc 'cd "${BDAG_PROJECT_ROOT:?set BDAG_PROJECT_ROOT in ~/.config/bdag-ipfs-content-sidecar.env}" && exec ./ops/ipfs_content_sidecar.py'
