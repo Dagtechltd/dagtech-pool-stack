@@ -1,22 +1,45 @@
-# vendor/jeremy/v6.3.20/bin/ — IPFS-pinned binaries
+# vendor/jeremy/v6.3.20/bin/ - binaries served from GitHub Releases
 
-These five binaries are **not committed to git** (combined 157 MB, exceeds reasonable
-git-repo health). They are byte-identical to what Jeremy ships in his IPFS release at
-CID `bafybeiga7llbde6jh2pzfdp2pvg3woqqxzy4aetmdijigaop67tu5ycffi`
-(zip SHA256 `11363f5e91cea12a541ad39ee8df5fd02b7e479d60e7c1203b1d5c9803b4b553`).
+The 5 prebuilt linux-amd64 binaries that ship with this upstream are NOT in the git
+tree (combined ~158 MB, kept out of git for repo health). They are mirrored to a
+**GitHub Release** on this repo so operators have zero IPFS dependency.
 
-Fetch + verify locally:
+## Get the binaries (no IPFS needed)
+
 ```bash
-ZIP=pool-stack-docker-v6.3.20-jeremy-dev-release.20260614-linux-amd64.zip
-curl -fL https://dweb.link/ipfs/bafybeiga7llbde6jh2pzfdp2pvg3woqqxzy4aetmdijigaop67tu5ycffi -o $ZIP
-echo "11363f5e91cea12a541ad39ee8df5fd02b7e479d60e7c1203b1d5c9803b4b553  $ZIP" | sha256sum -c -
-unzip -j $ZIP "*/bin/*" -d bin/
+gh release download upstream-jeremy-v6.3.20-20260614 \
+  -R Dagtechltd/dagtech-pool-stack \
+  -p 'blockdag-node' -p 'mining-pool' -p 'nodeworker' \
+  -p 'dashboard' -p 'dashboard-api' -p 'checksums.txt' \
+  -D vendor/jeremy/v6.3.20/bin/
+cd vendor/jeremy/v6.3.20/bin
+sha256sum -c checksums.txt
+chmod +x blockdag-node mining-pool nodeworker dashboard dashboard-api
 ```
 
-| File | Size | Role |
+Or direct curl (no `gh` CLI):
+```bash
+BASE=https://github.com/Dagtechltd/dagtech-pool-stack/releases/download/upstream-jeremy-v6.3.20-20260614
+for f in blockdag-node mining-pool nodeworker dashboard dashboard-api checksums.txt; do
+  curl -fL "$BASE/$f" -o "vendor/jeremy/v6.3.20/bin/$f"
+done
+cd vendor/jeremy/v6.3.20/bin && sha256sum -c checksums.txt
+```
+
+## Provenance
+
+| Asset | Size | SHA256 |
 |---|---|---|
-| blockdag-node    | 95 MB | QNG core node |
-| mining-pool      | 25 MB | Jeremy's mining pool (replacement for asic-pool) |
-| nodeworker       | 17 MB | Child node manager |
-| dashboard        | 13 MB | UI tier |
-| dashboard-api    | 8.8 MB | API tier behind dashboard |
+| blockdag-node    | 95 MB  | ecfe5c3f494573057d1a387645966e0e1cdd7fadd83ac391dd2a00bd190783d7 |
+| mining-pool      | 25 MB  | dfab5bf2d1a27409cabe9060d6e195dee645677a87fcf41b9ceaaa759afea494 |
+| nodeworker       | 17 MB  | e6fbc789932e0acc67df03ac204c8519788b681a210929e6b08958e8c29a926f |
+| dashboard        | 13 MB  | d232188ab3186c4d45529a4cefc81ed71c2609e872ef9607f835270a27ad2ea3 |
+| dashboard-api    | 8.8 MB | a2bb1543a67ba94a976889a840a11ee43aa0509a90be4ed7f3db540d0de5b137 |
+
+## IPFS provenance (forensic only, not the runtime fetch path)
+
+- Upstream zip CID: `bafybeiga7llbde6jh2pzfdp2pvg3woqqxzy4aetmdijigaop67tu5ycffi`
+- Upstream zip SHA256: `11363f5e91cea12a541ad39ee8df5fd02b7e479d60e7c1203b1d5c9803b4b553`
+- Upstream IPNS (latest): `k51qzi5uqu5di0diurqi5rquevlgj4fv4ykm67tgovktd8vtnlimcvqywk1jhg`
+
+The byte-identical zip is also attached to the same Release for full archival.
