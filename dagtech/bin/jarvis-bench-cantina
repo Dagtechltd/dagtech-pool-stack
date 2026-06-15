@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+# JARVIS bench-cantina: 60-second metric capture for the X100 mining stack.
+# Writes one JSON line per tick to /opt/jarvis/log/bench/<phase>/<host>.jsonl.
+# Designed to be cheap, side-effect-free, and runnable for days.
+#
+# Phase is set by env BENCH_PHASE (baseline | implementation | post).
+# The compare tool reads two phase windows and produces the delta report.
+from __future__ import annotations
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+PHASE = os.environ.get("BENCH_PHASE", "baseline")
+HOST = socket.gethostname()
+OUT_DIR = Path("/opt/jarvis/log/bench") / PHASE
+OUT_FILE = OUT_DIR / (HOST + ".jsonl")
+
+# Configurable knobs
+X100_HOST = "192.168.1.20"
+X100_CGMINER_PORT = 4028
+WALLET = "0x6387C32ccDD60BfBa00EC70A67715Dcd52E8083f"
+EVM_RPC = "http://127.0.0.1:18545"
+QNG_RPC = "http://127.0.0.1:38131"
+QNG_USER, QNG_PASS = "test", "test"
+HANS_SOLO_LOG_LINES = 200
+EXPECTED_CONTAINERS = ("hans-solo", "asic-pool", "pool-db", "rpc-failover",
+                       "bdag-miner-node-1", "bdag-miner-node-2",
+                       "bdag-miner-node-3", "bdag-miner-node-x100")
+
+
+def safe(fn, default=None):
+    try:
+        return fn()
+    except Exception:
+        return default
+
+
+def rpc(url, method, params=None, auth=False):
+    body = json.dumps({"jsonrpc": "2.0", "id": 1,
+                       "method": method, "params": params or []}).encode()
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    if auth:
+        import base64
+        b = base64.b64encode((QNG_USER + ":" + QNG_PASS).encode()).decode()
+        req.add_header("Authorization", "Basic " + b)
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return json.loads(r.read())
+
+
+def cgminer_cmd(cmd):
+    s = socket.socket()
+    s.settimeout(3)
+    s.connect((X100_HOST, X100_CGMINER_PORT))
+    s.sendall(cmd.encode())
+    chunks = []
+    while True:
+        try:
+            d = s.recv(8192)
+            if not d:
+                break
+            chunks.append(d)
+        except socket.timeout:
+            break
+    s.close()
+    return b"".join(chunks).decode(errors="replace")
+
+
+def cgminer_parse(raw):
+    """Crude parse — returns dict of relevant fields from devs response."""
+    out = {}
+    for k in ("MHS av", "MHS 20s", "Accepted", "Rejected",
+              "Hardware Errors", "Status", "Last Share Time"):
+        m = re.search(re.escape(k) + r"=(\S+?)[,|]", raw)
+        if m:
+            out[k.replace(" ", "_")] = m.group(1)
+    return out
+
+
+def docker_ps_states():
+    out = subprocess.check_output(
+        ["sudo", "-n", "docker", "ps", "-a", "--format", "{{.Names}}|{{.Status}}|{{.State}}"],
+        text=True, timeout=10,
+    )
+    states = {}
+    for line in out.splitlines():
+        parts = line.split("|")
+        if len(parts) >= 3:
+            states[parts[0]] = {"status": parts[1], "state": parts[2]}
+    return states
+
+
+def docker_stats_one(name):
+    out = subprocess.check_output(
+        ["sudo", "-n", "docker", "stats", "--no-stream", "--format",
+         "{{.CPUPerc}}|{{.MemPerc}}|{{.MemUsage}}|{{.NetIO}}|{{.BlockIO}}", name],
+        text=True, timeout=8,
+    ).strip()
+    parts = out.split("|")
+    if len(parts) >= 5:
+        return {"cpu": parts[0], "mem_pct": parts[1], "mem": parts[2],
+                "netio": parts[3], "blockio": parts[4]}
+    return {}
+
+
+def loadavg():
+    with open("/proc/loadavg") as f:
+        return f.read().split()[:3]
+
+
+def meminfo():
+    info = {}
+    with open("/proc/meminfo") as f:
+        for line in f:
+            k, _, v = line.partition(":")
+            info[k.strip()] = v.strip().split()[0]
+    return {"MemTotal_kB": int(info.get("MemTotal", 0)),
+            "MemAvailable_kB": int(info.get("MemAvailable", 0))}
+
+
+def disk_free(path="/home/bdag"):
+    out = subprocess.check_output(["df", "-B1", "--output=avail,size", path], text=True)
+    avail, size = map(int, out.splitlines()[1].split())
+    return {"avail_bytes": avail, "size_bytes": size, "pct_used": round((size - avail) / size * 100, 2)}
+
+
+def net_dev_eth0():
+    with open("/proc/net/dev") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("eth0:"):
+                fields = line.split()[1:]
+                return {"rx_bytes": int(fields[0]), "rx_packets": int(fields[1]),
+                        "tx_bytes": int(fields[8]), "tx_packets": int(fields[9])}
+    return {}
+
+
+def hans_solo_log_summary():
+    """Count shares + blocks in the last HANS_SOLO_LOG_LINES of hans-solo log."""
+    out = subprocess.check_output(
+        ["sudo", "-n", "docker", "logs", "--tail", str(HANS_SOLO_LOG_LINES), "hans-solo"],
+        text=True, stderr=subprocess.STDOUT, timeout=8,
+    )
+    return {
+        "lines_scanned": len(out.splitlines()),
+        "submit_lines": sum(1 for l in out.splitlines() if "submit" in l.lower()),
+        "block_lines": sum(1 for l in out.splitlines() if "block found" in l.lower()
+                                                       or "share accepted as block" in l.lower()),
+        "rejected_lines": sum(1 for l in out.splitlines() if "rejected" in l.lower()),
+        "tail_last_line": out.splitlines()[-1] if out.splitlines() else "",
+    }
+
+
+def main():
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    tick = {
+        "ts": time.strftime("%FT%TZ", time.gmtime()),
+        "phase": PHASE,
+        "host": HOST,
+        # Economic — wallet balance is the gold standard
+        "wallet_bdag": safe(lambda: int(rpc(EVM_RPC, "eth_getBalance",
+                                            [WALLET, "latest"])["result"], 16) / 1e18),
+        # Chain state
+        "evm_block": safe(lambda: int(rpc(EVM_RPC, "eth_blockNumber")["result"], 16)),
+        "evm_chain_id": safe(lambda: rpc(EVM_RPC, "eth_chainId")["result"]),
+        "evm_peer_count": safe(lambda: int(rpc(EVM_RPC, "net_peerCount")["result"], 16)),
+        "evm_syncing": safe(lambda: rpc(EVM_RPC, "eth_syncing")["result"]),
+        # X100 silicon
+        "x100_devs_raw": safe(lambda: cgminer_cmd("devs")[:1500]),
+        "x100": safe(lambda: cgminer_parse(cgminer_cmd("devs"))),
+        # Pool log signals (60s window)
+        "hans_solo": safe(hans_solo_log_summary),
+        # Container fleet
+        "containers": safe(docker_ps_states),
+        "stats_hans_solo": safe(lambda: docker_stats_one("hans-solo")),
+        "stats_node_x100": safe(lambda: docker_stats_one("bdag-miner-node-x100")),
+        # Host
+        "loadavg": safe(loadavg),
+        "mem": safe(meminfo),
+        "disk_chain": safe(lambda: disk_free("/home/bdag")),
+        "net_eth0": safe(net_dev_eth0),
+    }
+    with open(OUT_FILE, "a") as f:
+        f.write(json.dumps(tick) + "\n")
+
+
+if __name__ == "__main__":
+    main()

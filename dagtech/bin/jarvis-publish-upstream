@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+# JARVIS publish-upstream: consumes /opt/jarvis/state/jeremy-pending.json
+# (written by jarvis-sync-jeremy on detection) and materialises a new
+# upstream mirror into Dagtechltd/dagtech-pool-stack:
+#   - Downloads both arch zips, verifies SHA256
+#   - Creates a fresh branch  upstream/jeremy-<ver>-<date>
+#   - Rsyncs new vendored source (excluding bin/) over vendor/jeremy/<ver>/
+#   - Updates version.txt + README provenance + bin/README.md
+#   - Creates tag + release with all binaries + zips + install.sh + checksums
+#   - Opens a PR against main (does NOT auto-merge)
+#   - Telegrams Boss with PR URL
+#
+# Designed to be idempotent: safe to re-run if a phase fails halfway through.
+from __future__ import annotations
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+REPO = "Dagtechltd/dagtech-pool-stack"
+WORK = Path("/home/bdag/dagtech-pool-stack-repo")
+CACHE = Path("/opt/jarvis/cache/jeremy")
+STATE = Path("/opt/jarvis/state")
+LOG = Path("/opt/jarvis/log/jarvis-publish-upstream.log")
+PENDING = STATE / "jeremy-pending.json"
+TG_BOT = "8769759253:AAFd-7c1pJZ1DTuKdCXeC2h6HAutPZES6KA"
+TG_CHAT = "6709307529"
+TG_URL = "http://10.10.0.1:8443"
+
+
+def log(msg):
+    line = time.strftime("%FT%TZ", time.gmtime()) + " " + msg
+    print(line, flush=True)
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOG, "a") as f:
+        f.write(line + "\n")
+
+
+def telegram(text):
+    try:
+        data = urllib.parse.urlencode({"chat_id": TG_CHAT, "text": text}).encode()
+        urllib.request.urlopen(
+            urllib.request.Request(
+                TG_URL + "/bot" + TG_BOT + "/sendMessage",
+                data=data, method="POST"
+            ),
+            timeout=10,
+        )
+    except Exception as exc:
+        log("telegram failed: " + str(exc))
+
+
+def token():
+    inst = Path("/tmp/dagtech_inst_id").read_text().strip()
+    return subprocess.check_output(
+        ["/opt/jarvis/bin/jarvis-gh-token", inst], text=True
+    ).strip()
+
+
+def gh(method, path, tok, body=None, raw=False):
+    req = urllib.request.Request(
+        "https://api.github.com" + path,
+        method=method,
+        data=json.dumps(body).encode() if body else None,
+        headers={
+            "Authorization": "Bearer " + tok,
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "DagTech-JARVIS",
+            "Content-Type": "application/json",
+        },
+    )
+    r = urllib.request.urlopen(req, timeout=30)
+    return r.read() if raw else json.loads(r.read())
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(4 * 1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def fetch_zip(cid, expected_sha, dst):
+    if dst.exists() and sha256_file(dst) == expected_sha:
+        log("cache hit " + str(dst))
+        return True
+    for gw in ("https://dweb.link", "https://ipfs.io", "https://gateway.pinata.cloud"):
+        url = gw + "/ipfs/" + cid
+        try:
+            log("fetch " + url)
+            subprocess.check_call(
+                ["curl", "-fL", "--retry", "2", "--connect-timeout", "30",
+                 "--max-time", "1800", "-o", str(dst) + ".part", url]
+            )
+            actual = sha256_file(Path(str(dst) + ".part"))
+            if actual != expected_sha:
+                log("SHA mismatch from " + gw + " got=" + actual + " want=" + expected_sha)
+                os.unlink(str(dst) + ".part")
+                continue
+            os.rename(str(dst) + ".part", str(dst))
+            return True
+        except Exception as exc:
+            log("gw error: " + str(exc))
+    return False
+
+
+def upload_asset(upload_url_template, name, path, content_type, tok):
+    upload_url = upload_url_template.split("{")[0] + "?name=" + urllib.parse.quote(name)
+    with open(path, "rb") as f:
+        body = f.read()
+    req = urllib.request.Request(
+        upload_url,
+        method="POST",
+        data=body,
+        headers={
+            "Authorization": "Bearer " + tok,
+            "Content-Type": content_type,
+            "User-Agent": "DagTech-JARVIS",
+        },
+    )
+    r = urllib.request.urlopen(req, timeout=300)
+    return json.loads(r.read())
+
+
+def main():
+    if not PENDING.exists():
+        log("no pending manifest, nothing to publish")
+        return 0
+    manifest = json.loads(PENDING.read_text())
+    version = manifest["version"]
+    page_cid = manifest["page_cid"]
+    amd = manifest["amd64"]
+    arm = manifest["arm64"]
+    tag_name = "upstream-jeremy-" + version + "-" + time.strftime("%Y%m%d", time.gmtime())
+    branch = "upstream/jeremy-" + version + "-" + time.strftime("%Y%m%d", time.gmtime())
+
+    log("publish start version=" + version + " tag=" + tag_name + " branch=" + branch)
+    telegram("JARVIS publish: starting mirror of " + version + " (tag " + tag_name + ")")
+
+    CACHE.mkdir(parents=True, exist_ok=True)
+
+    # Phase 1: fetch + verify both arch zips
+    amd_zip = CACHE / (amd["name"] + ".zip")
+    arm_zip = CACHE / (arm["name"] + ".zip")
+    if not fetch_zip(amd["cid"], amd["sha256"], amd_zip):
+        telegram("JARVIS publish FAIL: amd64 zip fetch/SHA verify failed")
+        return 2
+    if not fetch_zip(arm["cid"], arm["sha256"], arm_zip):
+        telegram("JARVIS publish FAIL: arm64 zip fetch/SHA verify failed")
+        return 2
+    log("both archs fetched + SHA verified")
+
+    # Phase 2: extract amd64 (primary, source tree comes from it)
+    amd_dir = CACHE / amd["name"]
+    arm_dir = CACHE / arm["name"]
+    if amd_dir.exists():
+        shutil.rmtree(amd_dir)
+    if arm_dir.exists():
+        shutil.rmtree(arm_dir)
+    subprocess.check_call(["unzip", "-q", str(amd_zip), "-d", str(CACHE)])
+    subprocess.check_call(["unzip", "-q", str(arm_zip), "-d", str(CACHE)])
+    log("extracted both archs")
+
+    # Phase 3: compute checksums for binaries from both archs
+    bin_specs = ["blockdag-node", "mining-pool", "nodeworker", "dashboard", "dashboard-api"]
+    asset_paths = {}
+    checksums_lines = []
+    for b in bin_specs:
+        for arch_label, arch_dir in (("amd64", amd_dir), ("arm64", arm_dir)):
+            p = arch_dir / "bin" / b
+            if not p.exists():
+                log("WARN missing " + str(p))
+                continue
+            name = b + "-" + arch_label
+            sha = sha256_file(p)
+            asset_paths[name] = p
+            checksums_lines.append(sha + "  " + name)
+    # The original zips + install.sh
+    asset_paths[amd["name"] + ".zip"] = amd_zip
+    asset_paths[arm["name"] + ".zip"] = arm_zip
+    checksums_lines.append(amd["sha256"] + "  " + amd["name"] + ".zip")
+    checksums_lines.append(arm["sha256"] + "  " + arm["name"] + ".zip")
+    # install-vX.Y.Z.sh — find it via the install_cid
+    install_path = CACHE / ("install-" + version + ".sh")
+    if install_path.exists():
+        asset_paths["install-" + version + ".sh"] = install_path
+        checksums_lines.append(sha256_file(install_path) + "  install-" + version + ".sh")
+    # checksums.txt
+    checksums_path = CACHE / "checksums.txt"
+    checksums_path.write_text("\n".join(checksums_lines) + "\n")
+    asset_paths["checksums.txt"] = checksums_path
+    log("asset set built (" + str(len(asset_paths)) + " files)")
+
+    # Phase 4: prepare git branch with new vendored source
+    tok = token()
+    main_sha = gh("GET", "/repos/" + REPO + "/branches/main", tok)["commit"]["sha"]
+    # Create branch ref from main
+    try:
+        gh("POST", "/repos/" + REPO + "/git/refs", tok,
+           {"ref": "refs/heads/" + branch, "sha": main_sha})
+    except urllib.error.HTTPError as e:
+        if e.code != 422:  # 422 = ref already exists, OK to reuse
+            raise
+        log("branch already exists, reusing")
+
+    # Pull the new branch locally, refresh vendor/jeremy/<version>/
+    subprocess.check_call(["git", "-C", str(WORK), "fetch", "--depth=1", "origin", branch])
+    subprocess.check_call(["git", "-C", str(WORK), "checkout", branch])
+    new_vendor = WORK / "vendor" / "jeremy" / version
+    if new_vendor.exists():
+        shutil.rmtree(new_vendor)
+    new_vendor.mkdir(parents=True)
+    subprocess.check_call([
+        "rsync", "-a", "--exclude=bin/",
+        str(amd_dir) + "/", str(new_vendor) + "/"
+    ])
+    # bin/ stub
+    (new_vendor / "bin").mkdir(exist_ok=True)
+    bin_readme_lines = [
+        "# vendor/jeremy/" + version + "/bin/ - binaries served from GitHub Release " + tag_name,
+        "",
+        "Operators download via:",
+        "```bash",
+        "gh release download " + tag_name + " -R " + REPO + " -p '*amd64*' -p 'checksums.txt'",
+        "sha256sum -c checksums.txt",
+        "```",
+        "",
+        "## SHA256 (this release)",
+        "",
+        "| File | SHA256 |",
+        "|---|---|",
+    ]
+    for line in checksums_lines:
+        sha, _, name = line.partition("  ")
+        bin_readme_lines.append("| `" + name + "` | `" + sha + "` |")
+    (new_vendor / "bin" / "README.md").write_text("\n".join(bin_readme_lines) + "\n")
+
+    # version.txt
+    (WORK / "version.txt").write_text(
+        "dagtech-pool-stack v0.x.0-jeremy" + version + "-base\n"
+        "upstream-source: BlockdagEngineering jeremy-dev-release " + version + "\n"
+        "upstream-amd64-sha256: " + amd["sha256"] + "\n"
+        "upstream-arm64-sha256: " + arm["sha256"] + "\n"
+        "upstream-page-cid: " + page_cid + "\n"
+    )
+
+    # Commit + push
+    subprocess.check_call(["git", "-C", str(WORK), "add", "-A"])
+    commit_msg = (
+        "Sync upstream: BlockdagEngineering jeremy-dev-release " + version + "\n\n"
+        "- amd64 SHA256: " + amd["sha256"] + "\n"
+        "- arm64 SHA256: " + arm["sha256"] + "\n"
+        "- page CID: " + page_cid + "\n\n"
+        "Authored-by: DagTech JARVIS <jarvis@dagtech.network>"
+    )
+    subprocess.check_call([
+        "git", "-C", str(WORK),
+        "-c", "user.email=jarvis@dagtech.network",
+        "-c", "user.name=DagTech JARVIS",
+        "commit", "-q", "-m", commit_msg,
+    ])
+    push_url = "https://x-access-token:" + tok + "@github.com/" + REPO + ".git"
+    subprocess.check_call(["git", "-C", str(WORK), "push", "-q", push_url, branch])
+    log("branch " + branch + " pushed")
+
+    # Phase 5: tag + release
+    branch_sha = gh("GET", "/repos/" + REPO + "/branches/" + branch, tok)["commit"]["sha"]
+    tag_obj = gh("POST", "/repos/" + REPO + "/git/tags", tok, {
+        "tag": tag_name,
+        "message": "Upstream mirror " + version,
+        "object": branch_sha,
+        "type": "commit",
+    })
+    gh("POST", "/repos/" + REPO + "/git/refs", tok,
+       {"ref": "refs/tags/" + tag_name, "sha": tag_obj["sha"]})
+
+    release = gh("POST", "/repos/" + REPO + "/releases", tok, {
+        "tag_name": tag_name,
+        "name": "Upstream mirror - BlockdagEngineering jeremy-dev-release " + version,
+        "body": (
+            "Auto-mirror by JARVIS. Both linux-amd64 and linux-arm64 binaries plus the "
+            "original IPFS zips attached. Verify against `checksums.txt`.\n\n"
+            "- amd64 SHA256: `" + amd["sha256"] + "`\n"
+            "- arm64 SHA256: `" + arm["sha256"] + "`\n"
+            "- upstream page CID: `" + page_cid + "`\n"
+        ),
+        "draft": False,
+        "prerelease": True,
+        "make_latest": "false",
+    })
+    upload_url = release["upload_url"]
+
+    # Phase 6: upload assets
+    for name, path in asset_paths.items():
+        ct = "application/zip" if name.endswith(".zip") else (
+             "text/x-shellscript" if name.endswith(".sh") else (
+             "text/plain" if name.endswith(".txt") else "application/octet-stream"))
+        log("upload " + name + " (" + str(os.path.getsize(path) // 1024 // 1024) + " MB)")
+        upload_asset(upload_url, name, path, ct, tok)
+
+    # Phase 7: open PR
+    pr = gh("POST", "/repos/" + REPO + "/pulls", tok, {
+        "title": "Upstream sync: BlockdagEngineering jeremy-dev-release " + version,
+        "head": branch,
+        "base": "main",
+        "body": (
+            "Auto-generated by JARVIS publish-upstream.\n\n"
+            "Mirrors BlockdagEngineering jeremy-dev-release " + version + " into the\n"
+            "Dagtechltd repo and Release `" + tag_name + "`.\n\n"
+            "- amd64 SHA256: `" + amd["sha256"] + "`\n"
+            "- arm64 SHA256: `" + arm["sha256"] + "`\n"
+            "- upstream page CID: `" + page_cid + "`\n\n"
+            "**No code execution against production until manual review + merge.**\n\n"
+            "DagTech overlay (`dagtech/`) is untouched in this PR; this is a pure\n"
+            "vendor refresh."
+        ),
+        "maintainer_can_modify": True,
+    })
+    log("PR opened: " + pr.get("html_url", "(no url)"))
+
+    # Phase 8: consume manifest
+    PENDING.unlink()
+    log("manifest consumed, publish done")
+    telegram(
+        "JARVIS publish DONE for " + version + "\n"
+        "PR: " + pr.get("html_url", "(no url)") + "\n"
+        "Release: " + release.get("html_url", "(no url)") + "\n"
+        "Review + merge to land on main."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+# JARVIS bench-compare: compare two windows of jarvis-bench-cantina output.
+# Usage:
+#   jarvis-bench-compare baseline post           # default both directories
+#   jarvis-bench-compare baseline post --hours 24
+#
+# Reads JSONL files under /opt/jarvis/log/bench/<phase>/*.jsonl,
+# slices the last <hours> hours, computes deltas + percentiles per metric,
+# and prints a markdown comparison report. Exit code 0 = upshift confirmed,
+# 1 = mixed/inconclusive, 2 = regression.
+from __future__ import annotations
+import argparse
+import json
+import math
+import os
+import statistics
+import sys
+import time
+from pathlib import Path
+
+BENCH_ROOT = Path("/opt/jarvis/log/bench")
+
+
+def load_window(phase, hours):
+    cutoff = time.time() - hours * 3600
+    rows = []
+    pdir = BENCH_ROOT / phase
+    if not pdir.exists():
+        return rows
+    for jp in pdir.glob("*.jsonl"):
+        with open(jp) as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                    ts = time.mktime(time.strptime(r["ts"], "%Y-%m-%dT%H:%M:%SZ"))
+                    if ts >= cutoff:
+                        rows.append(r)
+                except Exception:
+                    continue
+    return rows
+
+
+def numeric_path(rows, path, fn=float):
+    """Pull a numeric series for a dotted-path key."""
+    out = []
+    for r in rows:
+        cur = r
+        for k in path.split("."):
+            if cur is None:
+                break
+            cur = cur.get(k) if isinstance(cur, dict) else None
+        if cur is None:
+            continue
+        try:
+            out.append(fn(cur))
+        except Exception:
+            continue
+    return out
+
+
+def summary(values):
+    if not values:
+        return None
+    s = sorted(values)
+    return {
+        "n": len(s),
+        "min": min(s),
+        "p50": s[len(s) // 2],
+        "p95": s[min(len(s) - 1, int(len(s) * 0.95))],
+        "max": max(s),
+        "mean": statistics.mean(s),
+        "stdev": statistics.pstdev(s) if len(s) > 1 else 0.0,
+    }
+
+
+def fmt(v, n=2):
+    if v is None:
+        return "-"
+    if isinstance(v, float):
+        return f"{v:.{n}f}"
+    return str(v)
+
+
+def delta(before, after, label, unit, higher_is_better, lines, score):
+    """Compare two summaries; emit a markdown row + add to scoreboard."""
+    if not before or not after:
+        lines.append(f"| {label} | {fmt(before['mean']) if before else '-'} | "
+                     f"{fmt(after['mean']) if after else '-'} | n/a | {unit} | - |")
+        return
+    b, a = before["mean"], after["mean"]
+    if b == 0:
+        pct = float("inf") if a > 0 else 0.0
+    else:
+        pct = (a - b) / abs(b) * 100
+    arrow = "↑" if a > b else ("↓" if a < b else "→")
+    direction = "good" if (a > b) == higher_is_better else (
+                "bad"  if (a != b) else "flat")
+    score.append((label, direction, pct))
+    lines.append(f"| {label} | {fmt(b)} | {fmt(a)} | "
+                 f"{arrow} {fmt(pct, 1)}% | {unit} | {direction} |")
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("phase_before", default="baseline", nargs="?")
+    p.add_argument("phase_after", default="post", nargs="?")
+    p.add_argument("--hours", type=float, default=24.0)
+    args = p.parse_args()
+
+    before = load_window(args.phase_before, args.hours)
+    after = load_window(args.phase_after, args.hours)
+    print(f"# Cantina bench report — {args.phase_before} vs {args.phase_after}")
+    print(f"_window: last {args.hours}h, "
+          f"before n={len(before)} after n={len(after)}, "
+          f"generated {time.strftime('%FT%TZ', time.gmtime())}_\n")
+
+    if not before or not after:
+        print("**NOT ENOUGH DATA** — need both windows populated. Run "
+              "jarvis-bench-cantina with BENCH_PHASE=baseline and BENCH_PHASE=post.")
+        return 2
+
+    # Compute wallet delta (the gold standard)
+    bw = numeric_path(before, "wallet_bdag")
+    aw = numeric_path(after, "wallet_bdag")
+    if bw and aw and len(bw) >= 2 and len(aw) >= 2:
+        bw_rate = (bw[-1] - bw[0]) / (len(bw) / 60.0)  # BDAG per hour (1 sample/min)
+        aw_rate = (aw[-1] - aw[0]) / (len(aw) / 60.0)
+    else:
+        bw_rate = aw_rate = None
+
+    lines = ["## Metric deltas\n",
+             "| Metric | Before | After | Δ | Unit | Verdict |",
+             "|---|---|---|---|---|---|"]
+    score = []
+
+    # Economic — most important
+    if bw_rate is not None:
+        b = {"mean": bw_rate}
+        a = {"mean": aw_rate}
+        delta(b, a, "Wallet earnings (gold)", "BDAG/h", True, lines, score)
+
+    # Hashrate stack
+    delta(summary(numeric_path(before, "x100.MHS_av")),
+          summary(numeric_path(after, "x100.MHS_av")),
+          "X100 hashrate avg", "MH/s", True, lines, score)
+    delta(summary(numeric_path(before, "x100.MHS_20s")),
+          summary(numeric_path(after, "x100.MHS_20s")),
+          "X100 hashrate 20s", "MH/s", True, lines, score)
+
+    # Pool throughput
+    delta(summary(numeric_path(before, "hans_solo.submit_lines")),
+          summary(numeric_path(after, "hans_solo.submit_lines")),
+          "Hans-solo submits / window", "lines", True, lines, score)
+    delta(summary(numeric_path(before, "hans_solo.block_lines")),
+          summary(numeric_path(after, "hans_solo.block_lines")),
+          "Hans-solo blocks / window", "lines", True, lines, score)
+    delta(summary(numeric_path(before, "hans_solo.rejected_lines")),
+          summary(numeric_path(after, "hans_solo.rejected_lines")),
+          "Hans-solo rejected / window", "lines", False, lines, score)
+
+    # Chain state
+    delta(summary(numeric_path(before, "evm_peer_count")),
+          summary(numeric_path(after, "evm_peer_count")),
+          "EVM peer count", "peers", True, lines, score)
+
+    # Resource — cpu/mem/load (lower is better)
+    delta(summary(numeric_path(before, "loadavg.0", lambda x: float(x))),
+          summary(numeric_path(after, "loadavg.0", lambda x: float(x))),
+          "Load avg (1m)", "load", False, lines, score)
+
+    # Verdict
+    print("\n".join(lines))
+    print("\n## Verdict\n")
+    good = sum(1 for _, d, _ in score if d == "good")
+    bad = sum(1 for _, d, _ in score if d == "bad")
+    flat = len(score) - good - bad
+    print(f"- good: **{good}**  bad: **{bad}**  flat: **{flat}**")
+
+    if bw_rate is not None and aw_rate is not None:
+        if aw_rate <= bw_rate * 0.99:
+            print(f"\n**⚠ ECONOMIC REGRESSION**: wallet earnings rate "
+                  f"{bw_rate:.2f} → {aw_rate:.2f} BDAG/h "
+                  f"(Δ {(aw_rate-bw_rate)/abs(bw_rate)*100:+.1f}%). "
+                  f"Revenue gate failed — roll back.")
+            return 2
+        if aw_rate >= bw_rate * 1.05:
+            print(f"\n**✅ ECONOMIC UPSHIFT**: wallet earnings rate "
+                  f"{bw_rate:.2f} → {aw_rate:.2f} BDAG/h "
+                  f"(Δ {(aw_rate-bw_rate)/abs(bw_rate)*100:+.1f}%). "
+                  f"Revenue gate passed — promote.")
+            return 0
+        print(f"\n**~ Flat economic**: rate within ±5% (baseline {bw_rate:.2f}, "
+              f"post {aw_rate:.2f} BDAG/h). Look at the metric table for the story.")
+    return 1 if bad > good else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

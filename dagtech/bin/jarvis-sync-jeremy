@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+# JARVIS auto-sync: watches Jeremy's BlockDAG IPNS for a new release,
+# mirrors it into Dagtechltd/dagtech-pool-stack as a tag + release with
+# binaries attached. No runtime IPFS dependency for downstream operators.
+#
+# Cadence: systemd timer (every 6 h).
+# On detection of a new upstream CID:
+#   1. Resolve IPNS -> CID
+#   2. Fetch install-<ver>.sh from the page (gives us per-arch zip CIDs + SHAs)
+#   3. Record manifest, telegram Boss, mark state
+#   4. (separate jarvis-publish-upstream) full asset download + push + release
+#
+from __future__ import annotations
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+IPNS = "k51qzi5uqu5di0diurqi5rquevlgj4fv4ykm67tgovktd8vtnlimcvqywk1jhg"
+REPO_FULL = "Dagtechltd/dagtech-pool-stack"
+STATE = Path("/opt/jarvis/state/jeremy-last-cid")
+LOG = Path("/opt/jarvis/log/jarvis-sync-jeremy.log")
+CACHE = Path("/opt/jarvis/cache/jeremy")
+TG_BOT = "8769759253:AAFd-7c1pJZ1DTuKdCXeC2h6HAutPZES6KA"
+TG_CHAT = "6709307529"
+TG_URL = "http://10.10.0.1:8443"
+
+
+def log(msg):
+    line = time.strftime("%FT%TZ", time.gmtime()) + " " + msg
+    print(line, flush=True)
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOG, "a") as f:
+        f.write(line + "\n")
+
+
+def telegram(text):
+    try:
+        data = urllib.parse.urlencode({"chat_id": TG_CHAT, "text": text}).encode()
+        urllib.request.urlopen(
+            urllib.request.Request(
+                TG_URL + "/bot" + TG_BOT + "/sendMessage",
+                data=data, method="POST"
+            ),
+            timeout=10,
+        )
+    except Exception as exc:
+        log("telegram failed: " + str(exc))
+
+
+def resolve_ipns(ipns):
+    url = "https://delegated-ipfs.dev/routing/v1/ipns/" + ipns
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    raw = urllib.request.urlopen(req, timeout=30).read().decode(errors="replace")
+    m = re.search(r"/ipfs/([a-zA-Z0-9]+)", raw)
+    return m.group(1) if m else None
+
+
+def fetch_via_gw(cid_path, dst, max_seconds=900):
+    for gw in ("https://dweb.link", "https://ipfs.io", "https://gateway.pinata.cloud"):
+        url = gw + "/ipfs/" + cid_path
+        try:
+            log("  GET " + url)
+            subprocess.check_call(
+                ["curl", "-fL", "--retry", "2", "--connect-timeout", "30",
+                 "--max-time", str(max_seconds), "-o", str(dst), url]
+            )
+            return True
+        except Exception as exc:
+            log("  gw failed: " + str(exc))
+    return False
+
+
+def grep(pat, text, default=""):
+    mm = re.search(pat, text)
+    return mm.group(1) if mm else default
+
+
+def main():
+    last = STATE.read_text().strip() if STATE.exists() else ""
+    log("sync start, last-cid=" + (last or "(none)"))
+
+    cid = resolve_ipns(IPNS)
+    if not cid:
+        log("FAIL: IPNS resolve returned no CID")
+        sys.exit(1)
+    if cid == last:
+        log("no change (cid=" + cid + "). exit clean.")
+        return
+    log("new upstream CID detected: " + cid + " (was " + (last or "<none>") + ")")
+    telegram("JARVIS sync: new Jeremy upstream detected.\nCID: " + cid +
+             "\nFetching install.sh to identify version + arch SHAs...")
+
+    CACHE.mkdir(parents=True, exist_ok=True)
+    page = CACHE / (cid + "-index.html")
+    if not fetch_via_gw(cid + "/index.html", page):
+        log("FAIL: could not fetch page index")
+        telegram("JARVIS sync FAIL: could not fetch upstream page index for " + cid)
+        sys.exit(2)
+
+    html = page.read_text(errors="replace")
+    m = re.search(r"/ipfs/(bafkrei[a-z0-9]+)[^\"]*-o install-(v[\d.]+)\.sh", html)
+    if not m:
+        log("FAIL: could not parse install.sh CID from page")
+        telegram("JARVIS sync FAIL: install.sh CID not found in page")
+        sys.exit(3)
+    install_cid, version = m.group(1), m.group(2)
+    log("install.sh CID=" + install_cid + " version=" + version)
+
+    install_sh = CACHE / ("install-" + version + ".sh")
+    if not fetch_via_gw(install_cid, install_sh):
+        log("FAIL: fetch install.sh")
+        sys.exit(4)
+    sh = install_sh.read_text()
+
+    arm_cid = grep(r'ARM64_CID="([a-z0-9]+)"', sh)
+    arm_sha = grep(r'ARM64_SHA256="([a-f0-9]+)"', sh)
+    amd_cid = grep(r'AMD64_CID="([a-z0-9]+)"', sh)
+    amd_sha = grep(r'AMD64_SHA256="([a-f0-9]+)"', sh)
+    arm_name = grep(r'ARM64_NAME="([^"]+)"', sh)
+    amd_name = grep(r'AMD64_NAME="([^"]+)"', sh)
+    log("arm64: " + arm_name + " cid=" + arm_cid + " sha=" + arm_sha)
+    log("amd64: " + amd_name + " cid=" + amd_cid + " sha=" + amd_sha)
+
+    manifest = {
+        "detected_at": time.strftime("%FT%TZ", time.gmtime()),
+        "page_cid": cid,
+        "install_cid": install_cid,
+        "version": version,
+        "arm64": {"name": arm_name, "cid": arm_cid, "sha256": arm_sha},
+        "amd64": {"name": amd_name, "cid": amd_cid, "sha256": amd_sha},
+    }
+    Path("/opt/jarvis/state/jeremy-pending.json").write_text(json.dumps(manifest, indent=2))
+
+    STATE.write_text(cid)
+    log("state updated -> " + cid + ", manifest staged")
+    telegram(
+        "JARVIS sync detected new upstream " + version + "\n"
+        "amd64 SHA: " + amd_sha + "\n"
+        "arm64 SHA: " + arm_sha + "\n"
+        "Manifest staged at /opt/jarvis/state/jeremy-pending.json; "
+        "jarvis-publish-upstream pass will fetch + mirror + open PR."
+    )
+
+
+if __name__ == "__main__":
+    main()
