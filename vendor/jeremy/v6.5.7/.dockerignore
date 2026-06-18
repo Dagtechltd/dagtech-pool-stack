@@ -1,0 +1,38 @@
+.git
+.gitignore
+
+# macOS metadata files can appear when ZIPs are extracted or copied to
+# external/non-APFS volumes. Docker Desktop may fail while reading xattrs on them.
+.DS_Store
+**/.DS_Store
+._*
+**/._*
+__MACOSX/
+**/__MACOSX/
+
+# Windows Explorer / removable-drive metadata.
+Thumbs.db
+**/Thumbs.db
+desktop.ini
+**/desktop.ini
+$RECYCLE.BIN/
+**/$RECYCLE.BIN/
+System Volume Information/
+**/System Volume Information/
+
+# Local installer output and secrets. Compose reads .env before build; the image
+# build itself only needs .env.example.
+.env
+.env.snapshot
+node.conf
+node.snapshot.conf
+
+# Local runtime/build leftovers.
+logs/
+data/
+dashboard/logs/
+*.bdsnap
+latest.bdsnap.part
+latest.bdsnap.part.*
+*.aria2
+*.tmp

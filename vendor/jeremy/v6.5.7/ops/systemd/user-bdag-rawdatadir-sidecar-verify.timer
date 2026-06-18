@@ -1,0 +1,13 @@
+[Unit]
+Description=Verify BlockDAG raw datadir sidecar safe/latest status every 10 minutes
+
+[Timer]
+OnBootSec=5m
+OnActiveSec=10m
+OnUnitActiveSec=10m
+RandomizedDelaySec=2m
+Persistent=true
+Unit=bdag-rawdatadir-sidecar-verify.service
+
+[Install]
+WantedBy=timers.target

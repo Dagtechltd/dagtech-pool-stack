@@ -1,0 +1,21 @@
+[Unit]
+Description=BlockDAG shared status sampler
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_PROJECT_ROOT=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_RUNTIME_DIR=/home/jeremy/blockdag-asic-pool/ops/runtime
+EnvironmentFile=-/home/jeremy/blockdag-asic-pool/ops/runtime/ops.env
+Nice=12
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUWeight=30
+IOWeight=25
+ExecStart=/usr/bin/python3 /home/jeremy/blockdag-asic-pool/ops/status_sampler.py --loop
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

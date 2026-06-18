@@ -1,0 +1,79 @@
+{
+  "name": "BDAG Community Pool Stack",
+  "version": "pool-v6.5.7",
+  "release_url": null,
+  "repository": "BlockdagEngineering/stack",
+  "tag": "pool-v6.5.7",
+  "target_commitish": null,
+  "commit": null,
+  "created_at": "2026-06-18T08:41:16Z",
+  "published_at": "2026-06-18T08:41:16Z",
+  "release_author": "local bundle",
+  "latest": true,
+  "distribution": {
+    "primary": "IPFS-pinned local release payloads",
+    "source_path": "C:\\Users\\Work\\Downloads\\stack-v6.5.7",
+    "ipfs_status": "payloads, helper, release page, docs, and manifest pinned to IPFS",
+    "note": "This manifest records immutable IPFS CIDs and SHA256 digests for the locally supplied pool-v6.5.7 payloads."
+  },
+  "bootstrap": {
+    "verified_local_helper": "install-v6.5.7.sh",
+    "verified_local_helper_cid": "bafkreidctpmfmjpdtcatg7lktqw774elpeuylamyjfpb2nqpb55y4vlfzy",
+    "behavior": "detects Linux host architecture, downloads the matching IPFS-pinned payload with gateway fallback, verifies SHA256, patches the packaged Dockerfile/startup/raw-datadir snapshot restore paths, uses IPFS gateway fallback for snapshot restore downloads, disables host IPv6 by default to avoid Docker Hub IPv6 route timeouts, pre-pulls Docker base images with retry, optionally restores the pinned IPFS raw datadir snapshot, extracts the payload, and runs the payload install.sh"
+  },
+  "targets": [
+    "linux-amd64",
+    "linux-arm64"
+  ],
+  "payloads": {
+    "linux-amd64": {
+      "arch_label": "AMD64 / x86_64",
+      "host_match": "x86_64 or amd64",
+      "file": "pool-stack-docker-pool-v6.5.7-linux-amd64.zip",
+      "cid": "bafybeibc562phfnizztpulf76p57dvhw3xl7kv6zwmhjwu37iglk4sizua",
+      "download_url": "https://ipfs.io/ipfs/bafybeibc562phfnizztpulf76p57dvhw3xl7kv6zwmhjwu37iglk4sizua",
+      "checksum_file": "pool-stack-docker-pool-v6.5.7-linux-amd64.zip.sha256",
+      "checksum_cid": "bafkreifsfgqnppsvbdjpvm2wusvlxawmzl4sohghvmll4wgbeag262vzuu",
+      "checksum_url": "https://ipfs.io/ipfs/bafkreifsfgqnppsvbdjpvm2wusvlxawmzl4sohghvmll4wgbeag262vzuu",
+      "sha256": "8d292703d77b656d85bfabf16df7b4ce4f86454a5c075a3c292a5b00f08bd852",
+      "checksum_asset_sha256": "b229a0d7be5508d2fab356a4aabb82cccaf9271cc7ab16be58c1200daf6ab9a5",
+      "size_bytes": 81151213,
+      "size_label": "81 MB"
+    },
+    "linux-arm64": {
+      "arch_label": "ARM64 / aarch64",
+      "host_match": "aarch64 or arm64",
+      "file": "pool-stack-docker-pool-v6.5.7-linux-arm64.zip",
+      "cid": "bafybeibobaofgsdlingiday5ea3hf62rludb4u5n6lgxaj3mgjbv35goqe",
+      "download_url": "https://ipfs.io/ipfs/bafybeibobaofgsdlingiday5ea3hf62rludb4u5n6lgxaj3mgjbv35goqe",
+      "checksum_file": "pool-stack-docker-pool-v6.5.7-linux-arm64.zip.sha256",
+      "checksum_cid": "bafkreiecin6g457sovjf5e2oelirxhsr6rcamcruft5p7tgycjn577jv6i",
+      "checksum_url": "https://ipfs.io/ipfs/bafkreiecin6g457sovjf5e2oelirxhsr6rcamcruft5p7tgycjn577jv6i",
+      "sha256": "53ac85c8f6337fd1d0cebbc17c3cf17804f371dcaf2270515e196c4223e50c6c",
+      "checksum_asset_sha256": "82437c6e77f275525e934e22d11b9e51f444060a342cfaffccd8125bdffd35f2",
+      "size_bytes": 74092547,
+      "size_label": "74 MB"
+    }
+  },
+  "release_ipns": {
+    "published_name": "k51qzi5uqu5djmbejujmyth6ge34vgo4q06dq7m1e2m74szri274yv7fttdusn",
+    "published_key": "bdag-community-preview",
+    "published_value": "see current IPNS resolution",
+    "gateway": "https://ipfs.io/ipns/k51qzi5uqu5djmbejujmyth6ge34vgo4q06dq7m1e2m74szri274yv7fttdusn/index.html",
+    "inbrowser_gateway": "https://k51qzi5uqu5djmbejujmyth6ge34vgo4q06dq7m1e2m74szri274yv7fttdusn.ipns.inbrowser.link/index.html",
+    "purpose": "mutable latest pointer for the tested IPFS release setup page"
+  },
+  "chain_data": {
+    "status": "pinned IPFS raw datadir snapshot resolved from IPNS at publish time",
+    "ipns": "k51qzi5uqu5dhgizyhubligbj23gvkuoyx1zeddw3b8xdjt1lryg6jodj35v5p",
+    "archive": "blockdag-mainnet-20260616-010313Z.tar.zst",
+    "archive_cid": null,
+    "latest_json": "/ipfs/bafybeie4pwyhppgcsld44i4ezj66npxmaxcpu7dcjcabincwsv5pqoram4/latest.json",
+    "root": "bafybeie4pwyhppgcsld44i4ezj66npxmaxcpu7dcjcabincwsv5pqoram4",
+    "sha256": "7398f24a50cbe47aba1417da559c53c8a821ec145c1235c5ecfb9032e0306403",
+    "block_count": 11474570,
+    "created_at": "2026-06-16T01:03:13Z",
+    "size_bytes": 9838642156,
+    "size_label": "9.8 GB"
+  }
+}

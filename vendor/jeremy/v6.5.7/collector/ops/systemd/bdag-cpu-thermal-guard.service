@@ -1,0 +1,15 @@
+[Unit]
+Description=BlockDAG mining dynamic CPU thermal guard
+After=bdag-cpu-boost.service power-profiles-daemon.service
+Wants=bdag-cpu-boost.service power-profiles-daemon.service
+
+[Service]
+Type=simple
+Environment=BDAG_CPU_GUARD_INTERVAL_SECONDS=30
+ExecStart=/home/jeremy/blockdag-asic-pool/ops/cpu-thermal-guard.sh
+Restart=always
+RestartSec=5
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

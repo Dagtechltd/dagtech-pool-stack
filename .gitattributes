@@ -1,0 +1,2 @@
+vendor/jeremy/v6.5.7/*.zip filter=lfs diff=lfs merge=lfs -text
+vendor/jeremy/v6.5.7/bin/* filter=lfs diff=lfs merge=lfs -text

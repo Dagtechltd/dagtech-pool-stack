@@ -1,0 +1,15 @@
+[Unit]
+Description=Allow BlockDAG P2P sync ports on all configured host interfaces
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=oneshot
+Environment=BDAG_P2P_PORTS=8151,8152
+Environment=BDAG_P2P_PROTOCOLS=tcp
+EnvironmentFile=-/etc/default/bdag-p2p-firewall
+ExecStart=/usr/local/sbin/bdag-allow-p2p-iptables
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh BlockDAG local P2P peer discovery
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=30min
+Persistent=true
+RandomizedDelaySec=5min
+Unit=bdag-local-peers.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run BlockDAG chain snapshot periodically
+
+[Timer]
+OnCalendar=*-*-* 00/2:00:00
+Persistent=true
+RandomizedDelaySec=120
+Unit=bdag-hourly-snapshot.service
+
+[Install]
+WantedBy=timers.target

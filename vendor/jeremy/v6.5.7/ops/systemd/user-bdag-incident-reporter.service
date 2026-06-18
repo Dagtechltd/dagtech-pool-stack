@@ -1,0 +1,11 @@
+[Unit]
+Description=BlockDAG incident reporter
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/blockdag-asic-pool
+EnvironmentFile=-%h/.config/bdag-dashboard.env
+ExecStart=/usr/bin/env python3 ops/incident_reporter.py
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6

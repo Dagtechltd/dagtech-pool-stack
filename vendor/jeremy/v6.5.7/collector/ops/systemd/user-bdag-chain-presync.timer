@@ -1,0 +1,12 @@
+[Unit]
+Description=Run BlockDAG live chain pre-sync every two hours
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=2h
+Persistent=true
+RandomizedDelaySec=5min
+Unit=bdag-chain-presync.service
+
+[Install]
+WantedBy=timers.target

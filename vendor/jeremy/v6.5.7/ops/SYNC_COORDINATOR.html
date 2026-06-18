@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>BlockDAG Active-Node Sync Coordinator</title>
+  <script type="application/json" id="agent-metadata">
+  {
+    "document_type": "active_node_sync_coordinator",
+    "topology": "one direct backend",
+    "mutation_policy": "monitor only",
+    "state_file": "ops/runtime/sync-coordinator-state.json"
+  }
+  </script>
+</head>
+<body>
+  <main>
+    <h1>BlockDAG Active-Node Sync Coordinator</h1>
+    <p>The coordinator records active-node catch-up state for dashboards and guards. It does not stop nodes, copy chain data, or change pool routing.</p>
+    <h2>Run</h2>
+    <pre><code>python3 ops/sync_coordinator.py --once --repair --json</code></pre>
+    <h2>State Contract</h2>
+    <ul>
+      <li><code>mode</code> is <code>active_node_catchup</code>.</li>
+      <li><code>active_node</code> is the only production backend service.</li>
+      <li><code>repairable</code> is false; repair decisions remain in readiness gates, watchdogs, and operator-approved restore tools.</li>
+    </ul>
+  </main>
+</body>
+</html>

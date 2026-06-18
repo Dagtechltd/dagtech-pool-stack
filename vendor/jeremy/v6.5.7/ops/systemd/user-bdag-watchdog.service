@@ -1,0 +1,26 @@
+[Unit]
+Description=BlockDAG pool watchdog and auto-repair worker
+After=default.target bdag-status-sampler.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_PROJECT_ROOT=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_RUNTIME_DIR=/home/jeremy/blockdag-asic-pool/ops/runtime
+Environment=BDAG_NODE_SERVICES=node
+Environment=BDAG_STACK_SERVICES=postgres,node,pool
+Environment=BDAG_POOL_CONTAINER=pool
+Environment=BDAG_POOL_DB_CONTAINER=postgres
+Environment=BDAG_WATCHDOG_INTERVAL=30
+Environment=BDAG_WATCHDOG_FAILURE_THRESHOLD=3
+Environment=BDAG_CLEAN_RESTORE_COOLDOWN=1800
+EnvironmentFile=-/home/jeremy/blockdag-asic-pool/.env
+EnvironmentFile=-/home/jeremy/blockdag-asic-pool/ops/runtime/ops.env
+ExecStartPre=/bin/sh -c 'i=0; while [ "$i" -lt 60 ]; do docker info >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 5; done; exit 1'
+ExecStart=/usr/bin/env python3 /home/jeremy/blockdag-asic-pool/ops/watchdog.py --loop
+ExecStopPost=/bin/sh -c 'rm -f "$BDAG_RUNTIME_DIR/dirty-shutdown.marker"'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

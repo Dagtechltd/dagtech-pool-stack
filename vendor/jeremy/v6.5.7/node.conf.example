@@ -1,0 +1,67 @@
+# BlockDAG node configuration for the Docker Compose stack.
+
+# P2P listen
+listen=0.0.0.0
+port=8150
+
+# BDAG RPC listen
+rpclisten=0.0.0.0:38131
+
+# EVM RPC listen
+evm.http.addr=0.0.0.0
+evm.http.port=18545
+evm.ws.addr=0.0.0.0
+evm.ws.port=18546
+
+
+# Bootstrap peers (mainnet seed nodes). Add one addpeer=... line per complete
+# BDAG P2P multiaddr. Keep only public peers that are currently reachable.
+addpeer=/ip4/13.57.132.47/tcp/8150/p2p/16Uiu2HAmDynYpWjWmgVGf9qVWvDdLnJ3ybVgDmFexizR4zMereus
+addpeer=/ip4/3.218.54.171/tcp/8150/p2p/16Uiu2HAmUZBdpuutiLPuru1UQnX8hf6GyvG7yU2B832sYjvNhmQG
+addpeer=/ip4/16.28.133.168/tcp/8150/p2p/16Uiu2HAm9UcTayJDSajjJYsWwVaN2qqGeczcs9kXse3dMdvGDRjz
+addpeer=/ip4/102.182.77.21/tcp/8151/p2p/16Uiu2HAm2uPLqM1dfd3ddbzg3FDAmvuvyo3vbBSXpVHurqAsUxWQ
+addpeer=/ip4/121.91.173.235/tcp/8150/p2p/16Uiu2HAkvH1U2kQqQFh6fSVQPGgABaKNHRMT7DceGe6kRtYr6ndY
+addpeer=/ip4/13.57.132.47/tcp/8150/p2p/16Uiu2HAmDynYpWjWmgVGf9qVWvDdLnJ3ybVgDmFexizR4zMereus
+addpeer=/ip4/3.218.54.171/tcp/8150/p2p/16Uiu2HAmUZBdpuutiLPuru1UQnX8hf6GyvG7yU2B832sYjvNhmQG
+addpeer=/ip4/102.182.77.16/tcp/8152/p2p/16Uiu2HAm99a8KYuUkL5LGEQbpRNhz5nzScrwYpEh47BfSaVMCg5G
+addpeer=/ip4/63.182.36.180/tcp/8150/p2p/16Uiu2HAmP8HsTF9ks8JjFamzT9JBZb3ymSiCJ8rkzXBZqYj4yKtP
+addpeer=/ip4/52.8.54.60/tcp/8150/p2p/16Uiu2HAkzUWr4YUM7mAhLdCVZgFoV9He6aQzKTyWWrJ7SWQKRTN7
+addpeer=/ip4/204.236.141.121/tcp/8150/p2p/16Uiu2HAm5qppgbBCjVpTN5nKtjEU5KsSbs2gz4S9uPiSWVSGfNh1
+addpeer=/ip4/54.151.18.92/tcp/8150/p2p/16Uiu2HAmVm91o1JXS2C7P6uTVuVX5empgnRtzuK4UaC8fHmePbKP
+addpeer=/ip4/18.142.70.83/tcp/8150/p2p/16Uiu2HAmBSdn2taoteYwLZJZkDm2iCwL6eQ4UaXYNBBtAwaBU18X
+addpeer=/ip4/54.214.229.250/tcp/8154/p2p/16Uiu2HAm1vZgJXKhUfWWC7nz9wzNpUDiYAid7zCZSKb1hhU7QBNB
+
+# Peer limit
+maxpeers=350
+cache=2048
+cache.database=70
+
+# RPC auth. Must match NODE_RPC_USER / NODE_RPC_PASS in .env.
+rpcuser=test
+rpcpass=test
+
+# Storage paths
+datadir=/var/lib/bdagStack/node
+logdir=/var/log/bdagStack
+
+# Native metrics endpoint
+metrics=true
+profile=0.0.0.0:6060
+
+# Keep empty unless node mining is intentionally enabled.
+miningaddr=
+
+modules=Blockdag
+modules=miner
+
+evm.http.api=eth,net,web3,txpool,debug
+http.readtimeout=45s
+http.writetimeout=45s
+http.idletimeout=45s
+evmenv="--rpc.allow-unprotected-txs --metrics --metrics.addr 0.0.0.0 --metrics.port 6060 --cache 2048"
+rpcmaxclients=64
+rpcmaxclientsperhost=16
+rpcmaxconcurrentreqs=500
+rpcrequesttimeout=60s
+http.ratelimit=1800
+http.rateburst=3200

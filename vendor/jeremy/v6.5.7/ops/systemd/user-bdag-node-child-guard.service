@@ -1,0 +1,8 @@
+[Unit]
+Description=BlockDAG node child process guard
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/blockdag-asic-pool
+EnvironmentFile=-%h/.config/bdag-dashboard.env
+ExecStart=/usr/bin/env python3 ops/node_child_guard.py

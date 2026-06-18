@@ -1,0 +1,468 @@
+
+x-mining-logging: &mining-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "2"
+
+x-build-args: &build-args
+  SNAPSHOT_PATH: ${SNAPSHOT_PATH:-docker/no-snapshot.marker}
+
+x-dev-source-contexts: &dev-source-contexts
+  stack_src: ${STACK_SRC_CONTEXT:-.}
+  blockdag_corechain: ${BLOCKDAG_CORECHAIN_CONTEXT:-.}
+  pool_src: ${POOL_SRC_CONTEXT:-.}
+  cpu_miner_src: ${CPU_MINER_SRC_CONTEXT:-.}
+  collector_src: ${COLLECTOR_SRC_CONTEXT:-./collector}
+  dashboard_src: ${DASHBOARD_SRC_CONTEXT:-.}
+
+x-node-critical: &node-critical
+  tmpfs:
+    - /tmp:size=${BDAG_NODE_TMPFS_SIZE:-512m},mode=1777
+    - /var/tmp:size=${BDAG_NODE_TMPFS_SIZE:-512m},mode=1777
+    - /run/bdag-ephemeral:size=${BDAG_NODE_TMPFS_SIZE:-512m},mode=1777
+  shm_size: ${BDAG_NODE_SHM_SIZE:-512m}
+  cpu_shares: 4096
+  blkio_config:
+    weight: 1000
+  oom_score_adj: -900
+
+x-pool-critical: &pool-critical
+  cpu_shares: 3072
+  blkio_config:
+    weight: 900
+  oom_score_adj: -800
+
+x-ops-low: &ops-low
+  cpu_shares: 256
+  blkio_config:
+    weight: 100
+  oom_score_adj: 300
+  
+
+
+services:
+
+  # --------------------------------------------------------------------------
+  # PostgreSQL for the mining pool. Schema is applied automatically on first
+  # boot via /docker-entrypoint-initdb.d.
+  # --------------------------------------------------------------------------
+  pool-db:
+    <<: *pool-critical
+    # Guard scripts (watchdog/sentinel) address containers by these runtime
+    # names; keep container_name aligned with BDAG_POOL_DB_CONTAINER.
+    container_name: postgres
+    image: postgres:15-bookworm
+    restart: unless-stopped
+    logging: *mining-logging
+    tmpfs:
+      - /tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+      - /var/tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+    environment:
+      TMPDIR: /tmp
+      TMP: /tmp
+      TEMP: /tmp
+      POSTGRES_USER:     ${POSTGRES_USER:-bdag_pool}
+      POSTGRES_DB:       ${POSTGRES_DB:-bdagpool}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./sql/pool-schema.sql:/docker-entrypoint-initdb.d/01-pool-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bdag_pool} -d ${POSTGRES_DB:-bdagpool}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # --------------------------------------------------------------------------
+  # BlockDAG node + nodeworker supervisor. Optional snapshot import happens at
+  # container start from a read-only bind mount, not during image build.
+  # --------------------------------------------------------------------------
+  node:
+    <<: *node-critical
+    container_name: node
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: .
+      dockerfile: ${DOCKERFILE:-dockerfile}
+      target: node
+      additional_contexts:
+        <<: *dev-source-contexts
+      args:
+        <<: *build-args
+    restart: unless-stopped
+    logging: *mining-logging
+    ports:
+      - "${P2P_PORT:-8150}:8150"
+      - "${BDAG_RPC_PORT:-38131}:38131"
+      - "${EVM_HTTP_PORT:-18545}:18545"
+      - "${EVM_WS_PORT:-18546}:18546"
+      - "${NODE_METRICS_PORT:-6060}:6060"
+    environment:
+      TMPDIR: /tmp
+      TMP: /tmp
+      TEMP: /tmp
+      BDAG_NETWORK: ${BDAG_NETWORK:-}
+      BDAG_EPHEMERAL_DIR: /run/bdag-ephemeral
+      BDAG_SNAPSHOT_URL: ${BDAG_SNAPSHOT_URL:-}
+      BDAG_NODE_ARCHIVAL: ${BDAG_NODE_ARCHIVAL:-0}
+      NODE_ARGS_APPEND: ${NODE_ARGS_APPEND:-}
+      SYNC_SOURCE_NODE: ${SYNC_SOURCE_NODE:-0}
+      BDAG_STORAGE_PROFILE: ${BDAG_STORAGE_PROFILE:-auto}
+      BDAG_NETWORK_TOPOLOGY: ${BDAG_NETWORK_TOPOLOGY:-auto}
+      BDAG_DETECTED_NETWORK_TOPOLOGY: ${BDAG_DETECTED_NETWORK_TOPOLOGY:-}
+      BDAG_ASIC_LAN_INTERFACE: ${BDAG_ASIC_LAN_INTERFACE:-}
+      BDAG_ASIC_LAN_CIDRS: ${BDAG_ASIC_LAN_CIDRS:-}
+      BDAG_P2P_ADVERTISE_IP: ${BDAG_P2P_ADVERTISE_IP:-}
+      BDAG_P2P_INTERFACE: ${BDAG_P2P_INTERFACE:-}
+      BOOTSTRAP_PEER_ADDRESSES: ${BOOTSTRAP_PEER_ADDRESSES:-}
+      BDAG_ENTRYPOINT_CHOWN_MODE: ${BDAG_ENTRYPOINT_CHOWN_MODE:-needed}
+      BDAG_NODEWORKER_LIVENESS_TIMEOUT: ${BDAG_NODEWORKER_LIVENESS_TIMEOUT:-5m}
+    volumes:
+    # Note: The default behaviour is to keep any DB state from a previous run, 
+    # to prevent unintentional loss of synced chain data.
+    # so if you want to start fresh, you need to delete the volume explicity.
+    # `docker compose down && docker volume rm <project>_node-data`\
+
+      - ${NODE_DATA_DIR:-node-data}:/var/lib/bdagStack/node
+      - nodeworker-data:/var/lib/bdagStack/nodeworker
+      - ${SNAPSHOT_HOST_PATH:-./docker/no-snapshot.marker}:/snapshot/latest.bdsnap:ro
+      # node.conf in project root (copy from node.conf.example). gitignored.
+      - ./node.conf:/etc/bdagStack/node.conf:ro
+
+  # --------------------------------------------------------------------------
+  # Mining pool. Connects to node RPC and Postgres.
+  # --------------------------------------------------------------------------
+  pool:
+    <<: *pool-critical
+    container_name: pool
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: .
+      dockerfile: ${DOCKERFILE:-dockerfile}
+      target: pool
+      additional_contexts:
+        <<: *dev-source-contexts
+      args:
+        <<: *build-args
+    restart: unless-stopped
+    logging: *mining-logging
+    tmpfs:
+      - /tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+      - /var/tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+    depends_on:
+      pool-db: { condition: service_healthy }
+    environment:
+      TMPDIR: /tmp
+      TMP: /tmp
+      TEMP: /tmp
+      # Compose interpolates ${...} from the project root .env file.
+      NODE_RPC_URL: http://node:38131
+      NODE_RPC_URLS: ${NODE_RPC_URLS:-http://node:38131}
+      POOL_SUBMIT_RPC_URLS: ${POOL_SUBMIT_RPC_URLS:-}
+      POOL_RPC_BACKENDS: ${POOL_RPC_BACKENDS:-}
+      POOL_RUNTIME_ADMIN_ENABLED: ${POOL_RUNTIME_ADMIN_ENABLED:-false}
+      PG_URL:       postgres://${POSTGRES_USER:-bdag_pool}:${POSTGRES_PASSWORD}@pool-db:5432/${POSTGRES_DB:-bdagpool}?sslmode=disable
+      # Stratum listen (inside container) — from root .env
+      POOL_BIND_ADDR:     ${POOL_BIND_ADDR:-0.0.0.0:3334}
+      NODE_RPC_USER:      ${NODE_RPC_USER:-test}
+      NODE_RPC_PASS:      ${NODE_RPC_PASS:-test}
+      PPLNS_N_WORK:       ${PPLNS_N_WORK:-1000}
+      POOL_FEE_PERCENTAGE: ${POOL_FEE_PERCENTAGE:-1.0}
+      POOL_BLOCK_MATURITY: ${POOL_BLOCK_MATURITY:-10}
+      POOL_PAYOUT_MATURITY: ${POOL_PAYOUT_MATURITY:-4096}
+      POOL_TEMPLATE_TTL_REFRESH_MS: ${POOL_TEMPLATE_TTL_REFRESH_MS:-2000}
+      POOL_SUBMIT_STALE_BLOCK_CANDIDATES: ${POOL_SUBMIT_STALE_BLOCK_CANDIDATES:-false}
+      POOL_MAX_BLOCK_CANDIDATE_JOB_AGE_MS: ${POOL_MAX_BLOCK_CANDIDATE_JOB_AGE_MS:-2500}
+      POOL_SUBMIT_BLOCK_HEADER_V2_ENABLED: ${POOL_SUBMIT_BLOCK_HEADER_V2_ENABLED:-true}
+      POOL_STALE_RACE_REJECT_WINDOW_SECONDS: ${POOL_STALE_RACE_REJECT_WINDOW_SECONDS:-10}
+      POOL_STALE_RACE_CLIENT_RESEND_THRESHOLD: ${POOL_STALE_RACE_CLIENT_RESEND_THRESHOLD:-1}
+      POOL_STALE_RACE_RECOVERY_COOLDOWN_SECONDS: ${POOL_STALE_RACE_RECOVERY_COOLDOWN_SECONDS:-5}
+      POOL_EXPIRED_JOB_CLIENT_RECONNECT_THRESHOLD: ${POOL_EXPIRED_JOB_CLIENT_RECONNECT_THRESHOLD:-3}
+      POOL_EXPIRED_JOB_CLIENT_RECONNECT_WINDOW_SECONDS: ${POOL_EXPIRED_JOB_CLIENT_RECONNECT_WINDOW_SECONDS:-120}
+      POOL_EXPIRED_JOB_CLIENT_RECONNECT_COOLDOWN_SECONDS: ${POOL_EXPIRED_JOB_CLIENT_RECONNECT_COOLDOWN_SECONDS:-60}
+      POOL_ALLOW_MULTIPLE_BLOCK_CANDIDATES_PER_JOB: ${POOL_ALLOW_MULTIPLE_BLOCK_CANDIDATES_PER_JOB:-true}
+      POOL_PREEMPTIVE_BLOCK_CANDIDATE_REFRESH_ENABLED: ${POOL_PREEMPTIVE_BLOCK_CANDIDATE_REFRESH_ENABLED:-true}
+      WALLET_RPC_URL:     ${WALLET_RPC_URL:-}
+      POOL_PRIVATE_KEY:   ${POOL_PRIVATE_KEY:-}
+      POOL_COINBASE_ADDRESS: ${POOL_COINBASE_ADDRESS:-}
+      MINING_POOL_ADDRESS: ${MINING_POOL_ADDRESS:?set MINING_POOL_ADDRESS to a non-zero payout address}
+      METRICS_ADDR:       ${METRICS_ADDR:-0.0.0.0:9090}
+      POOL_INSTANCE_ID:   ${POOL_INSTANCE_ID:-}
+    ports:
+      - "0.0.0.0:${POOL_BIND_PORT:-3334}:3334"
+      - "0.0.0.0:${POOL_API_PORT:-9090}:9090"
+
+
+
+  # --------------------------------------------------------------------------
+  # Read-only collector API from BlockdagEngineering/collector.
+  # --------------------------------------------------------------------------
+
+  collector:
+    <<: *ops-low
+    container_name: collector
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: .
+      dockerfile: ${DOCKERFILE:-dockerfile}
+      target: collector
+      additional_contexts:
+        <<: *dev-source-contexts
+      secrets:
+        - github_token
+    restart: unless-stopped
+    logging: *mining-logging
+    tmpfs:
+      - /tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+      - /var/tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+    depends_on:
+      node: { condition: service_started }
+      pool: { condition: service_started }
+    environment:
+      TMPDIR: /tmp
+      TMP: /tmp
+      TEMP: /tmp
+      # The collector observes current container names and exposes read-only JSON.
+      BDAG_NODE_SERVICES: node
+      BDAG_STACK_SERVICES: postgres,node,pool
+      BDAG_POOL_CONTAINER: pool
+      BDAG_POOL_CONTAINERS: pool
+      BDAG_POOL_DB_CONTAINER: postgres
+      BDAG_POOL_DB_USER: ${POSTGRES_USER:-bdag_pool}
+      BDAG_POOL_DB_NAME: ${POSTGRES_DB:-bdagpool}
+      BDAG_POOL_METRICS_PORT: 9090
+      BDAG_NODE_RPC_URLS: node=http://node:38131
+      BDAG_GLOBAL_CHAIN_RPC_URLS: node=http://node:38131
+      BDAG_RPC_URL: http://node:38131
+      # Must match node.conf rpcuser / rpcpass (same as pool service).
+      NODE_RPC_USER: ${NODE_RPC_USER:-test}
+      NODE_RPC_PASS: ${NODE_RPC_PASS:-test}
+      BDAG_COLLECTOR_BIND: 0.0.0.0
+      BDAG_COLLECTOR_PORT: 9280
+      BDAG_COLLECTOR_NODE_LOG_CONTAINER: ${BDAG_COLLECTOR_NODE_LOG_CONTAINER:-node}
+      BDAG_COLLECTOR_POOL_LOG_CONTAINER: ${BDAG_COLLECTOR_POOL_LOG_CONTAINER:-pool}
+      BDAG_COLLECTOR_DIRECT_STATUS_FALLBACK: ${BDAG_COLLECTOR_DIRECT_STATUS_FALLBACK:-0}
+      BDAG_COLLECTOR_STATUS_CACHE_SECONDS: ${BDAG_COLLECTOR_STATUS_CACHE_SECONDS:-10}
+      BDAG_COLLECTOR_SAMPLER_CACHE_SECONDS: ${BDAG_COLLECTOR_SAMPLER_CACHE_SECONDS:-120}
+      BDAG_COLLECTOR_STATUS_SAMPLE_WAIT_SECONDS: ${BDAG_COLLECTOR_STATUS_SAMPLE_WAIT_SECONDS:-60}
+      BDAG_STATUS_PAYLOAD_STALE_AFTER_SECONDS: ${BDAG_STATUS_PAYLOAD_STALE_AFTER_SECONDS:-120}
+      BDAG_COLLECTOR_GLOBAL_SAMPLER_INTERVAL_SECONDS: ${BDAG_COLLECTOR_GLOBAL_SAMPLER_INTERVAL_SECONDS:-60}
+      BDAG_GLOBAL_CACHE_TTL_SECONDS: ${BDAG_GLOBAL_CACHE_TTL_SECONDS:-60}
+      BDAG_GLOBAL_RPC_WORKERS: ${BDAG_GLOBAL_RPC_WORKERS:-24}
+      BDAG_GLOBAL_BLOCK_WINDOW: ${BDAG_GLOBAL_BLOCK_WINDOW:-600}
+      BDAG_GLOBAL_CACHE_MAX_TIP_LAG_BLOCKS: ${BDAG_GLOBAL_CACHE_MAX_TIP_LAG_BLOCKS:-30}
+      # Host-facing ASIC LAN Stratum endpoint; never a Docker bridge address.
+      BDAG_POOL_HOST: ${BDAG_POOL_HOST:-}
+      MINING_POOL_ADDRESS: ${MINING_POOL_ADDRESS:?set MINING_POOL_ADDRESS to a non-zero payout address}
+    ports:
+      - "127.0.0.1:${COLLECTOR_HOST_PORT:-9280}:9280"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/workspace:ro
+      - collector-runtime:/var/lib/bdag-collector
+
+  # --------------------------------------------------------------------------
+  # Host-side auto-repair layer, containerised. Watchdog and sentinel use
+  # dedicated repair targets that inherit the shared ops runtime (python3 +
+  # Docker CLI + Compose plugin) without bundling collector source. They run the
+  # stack repo's ops scripts against the host Docker socket. The repo is mounted at
+  # its host-identical absolute path so sentinel compose recreates resolve
+  # bind mounts correctly. BDAG_STACK_HOST_ROOT defaults to the directory
+  # compose is invoked from ($PWD); override it when running compose from
+  # outside the stack checkout (e.g. with -f).
+  # --------------------------------------------------------------------------
+  watchdog:
+    <<: *ops-low
+    container_name: watchdog
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: .
+      dockerfile: ${DOCKERFILE:-dockerfile}
+      target: watchdog
+    restart: unless-stopped
+    logging: *mining-logging
+    user: "1001:969"
+    group_add:
+      - "${BDAG_DOCKER_SOCKET_GID:-0}"
+    tmpfs:
+      - /tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+    working_dir: ${BDAG_STACK_HOST_ROOT:-${PWD}}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        python3 ops/automation_control.py ensure-normal
+        --owner watchdog-container --owner-unit docker-compose:watchdog
+        --reason 'provision automation control gate for containerised repairs'
+        && exec python3 ops/watchdog.py --loop
+    environment:
+      TMPDIR: /tmp
+      COMPOSE_PROJECT_NAME: stack
+      BDAG_PROJECT_ROOT: ${BDAG_STACK_HOST_ROOT:-${PWD}}
+      BDAG_RUNTIME_DIR: ${BDAG_STACK_HOST_ROOT:-${PWD}}/ops/runtime
+      BDAG_POOL_ENV_FILE: ${BDAG_STACK_HOST_ROOT:-${PWD}}/.env
+      BDAG_STATUS_SOURCE_URL: http://collector:9280/api/status
+      BDAG_NODE_SERVICES: node
+      BDAG_STACK_SERVICES: postgres,node,pool
+      BDAG_POOL_CONTAINER: pool
+      BDAG_POOL_CONTAINERS: pool
+      BDAG_POOL_DB_CONTAINER: postgres
+      BDAG_POOL_HOST: ${BDAG_POOL_HOST:-}
+      NODE_RPC_USER: ${NODE_RPC_USER:-test}
+      NODE_RPC_PASS: ${NODE_RPC_PASS:-test}
+      BDAG_WATCHDOG_INTERVAL: ${BDAG_WATCHDOG_INTERVAL:-60}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${BDAG_STACK_HOST_ROOT:-${PWD}}:${BDAG_STACK_HOST_ROOT:-${PWD}}
+
+  sentinel:
+    <<: *ops-low
+    container_name: sentinel
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: .
+      dockerfile: ${DOCKERFILE:-dockerfile}
+      target: sentinel
+    restart: unless-stopped
+    logging: *mining-logging
+    user: "1001:969"
+    group_add:
+      - "${BDAG_DOCKER_SOCKET_GID:-0}"
+    tmpfs:
+      - /tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+    working_dir: ${BDAG_STACK_HOST_ROOT:-${PWD}}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        python3 ops/automation_control.py ensure-normal
+        --owner sentinel-container --owner-unit docker-compose:sentinel
+        --reason 'provision automation control gate for containerised repairs'
+        && while true; do
+        python3 ops/stack_sentinel.py;
+        sleep $${BDAG_SENTINEL_INTERVAL_SECONDS:-60};
+        done
+    environment:
+      TMPDIR: /tmp
+      COMPOSE_PROJECT_NAME: stack
+      BDAG_PROJECT_ROOT: ${BDAG_STACK_HOST_ROOT:-${PWD}}
+      BDAG_RUNTIME_DIR: ${BDAG_STACK_HOST_ROOT:-${PWD}}/ops/runtime
+      BDAG_POOL_ENV_FILE: ${BDAG_STACK_HOST_ROOT:-${PWD}}/.env
+      BDAG_SENTINEL_STATUS_URL: http://collector:9280/api/status
+      BDAG_SENTINEL_INTERVAL_SECONDS: ${BDAG_SENTINEL_INTERVAL_SECONDS:-60}
+      # systemd unit checks do not apply inside a container; empty lists skip them.
+      BDAG_SENTINEL_USER_SERVICES: ""
+      BDAG_SENTINEL_USER_TIMERS: ""
+      BDAG_NODE_SERVICES: node
+      BDAG_STACK_SERVICES: postgres,node,pool
+      BDAG_POOL_CONTAINER: pool
+      BDAG_POOL_CONTAINERS: pool
+      BDAG_POOL_DB_CONTAINER: postgres
+      NODE_RPC_USER: ${NODE_RPC_USER:-test}
+      NODE_RPC_PASS: ${NODE_RPC_PASS:-test}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${BDAG_STACK_HOST_ROOT:-${PWD}}:${BDAG_STACK_HOST_ROOT:-${PWD}}
+
+  # --------------------------------------------------------------------------
+  # Keeps the host route to the remote miner LAN (via the ZeroTier peer)
+  # in place so the watchdog can reach the miner HTTP API for health checks
+  # and restarts. No-op unless BDAG_MINER_ROUTE_SUBNET is set in .env.
+  # --------------------------------------------------------------------------
+  miner-route:
+    image: alpine:3.20
+    container_name: miner-route
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+    logging: *mining-logging
+    environment:
+      BDAG_MINER_ROUTE_SUBNET: ${BDAG_MINER_ROUTE_SUBNET:-}
+      BDAG_MINER_ROUTE_GATEWAY: ${BDAG_MINER_ROUTE_GATEWAY:-}
+      BDAG_MINER_ROUTE_DEV: ${BDAG_MINER_ROUTE_DEV:-}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        while true; do
+        if [ -n "$$BDAG_MINER_ROUTE_SUBNET" ] && [ -n "$$BDAG_MINER_ROUTE_GATEWAY" ]; then
+        cmd="ip route replace $$BDAG_MINER_ROUTE_SUBNET via $$BDAG_MINER_ROUTE_GATEWAY";
+        [ -n "$$BDAG_MINER_ROUTE_DEV" ] && cmd="$$cmd dev $$BDAG_MINER_ROUTE_DEV";
+        $$cmd || echo "miner-route: failed: $$cmd";
+        fi;
+        sleep 60;
+        done
+
+  # --------------------------------------------------------------------------
+  # Dashboard UI over the collector API.
+  # --------------------------------------------------------------------------
+  dashboard:
+    <<: *ops-low
+    container_name: dashboard
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: .
+      dockerfile: ${DOCKERFILE:-dockerfile}
+      target: dashboard
+      additional_contexts:
+        <<: *dev-source-contexts
+    restart: unless-stopped
+    logging: *mining-logging
+    tmpfs:
+      - /tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+      - /var/tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+    depends_on:
+      collector: { condition: service_started }
+    environment:
+      TMPDIR: /tmp
+      TMP: /tmp
+      TEMP: /tmp
+      ADDR: ${DASHBOARD_LISTEN:-0.0.0.0:8088}
+      BDAG_COLLECTOR_API: ${BDAG_COLLECTOR_API:-http://collector:9280}
+      DASHBOARD_TIMEZONE: ${DASHBOARD_TIMEZONE:-Africa/Johannesburg}
+      BDAG_MINER_CONTROL_ENABLED: ${BDAG_MINER_CONTROL_ENABLED:-1}
+    ports:
+      - "${DASHBOARD_BIND:-0.0.0.0}:${DASHBOARD_HOST_PORT:-8088}:8088"
+
+  # --------------------------------------------------------------------------
+  # Optional CPU miner (dockerfile-dev target only). Enable with:
+  #   COMPOSE_PROFILES=miner
+  # --------------------------------------------------------------------------
+  cpu-miner:
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    profiles: [miner]
+    build:
+      context: .
+      dockerfile: ${DOCKERFILE:-dockerfile-dev}
+      target: miner
+      additional_contexts:
+        <<: *dev-source-contexts
+      args:
+        <<: *build-args
+    restart: unless-stopped
+    logging: *mining-logging
+    tmpfs:
+      - /tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+      - /var/tmp:size=${BDAG_CONTAINER_TMPFS_SIZE:-128m},mode=1777
+    depends_on:
+      pool: { condition: service_started }
+    environment:
+      TMPDIR: /tmp
+      TMP: /tmp
+      TEMP: /tmp
+      POOL_URL: ${MINER_POOL_URL:-stratum+tcp://pool:3334}
+      POOL_USER: ${MINING_POOL_ADDRESS:-0x0000000000000000000000000000000000000000}
+      POOL_PASS: ${MINER_POOL_PASS:-x}
+      WORKERS: ${MINER_WORKERS:-1}
+
+secrets:
+  github_token:
+    environment: GITHUB_TOKEN
+
+volumes:
+  postgres-data:
+  node-data:
+  nodeworker-data:
+  collector-runtime:

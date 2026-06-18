@@ -1,0 +1,13 @@
+[Unit]
+Description=Run BlockDAG thirty-minute mining proof-of-health guard
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Persistent=true
+RandomizedDelaySec=2m
+Unit=bdag-mining-30min-guard.service
+
+[Install]
+WantedBy=timers.target

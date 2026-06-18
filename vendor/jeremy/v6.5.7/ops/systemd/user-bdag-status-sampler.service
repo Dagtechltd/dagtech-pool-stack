@@ -1,0 +1,30 @@
+[Unit]
+Description=BlockDAG shared status sampler
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_PROJECT_ROOT=/home/jeremy/blockdag-asic-pool
+Environment=BDAG_RUNTIME_DIR=/home/jeremy/blockdag-asic-pool/ops/runtime
+Environment=BDAG_POOL_ENV_FILE=/home/jeremy/blockdag-asic-pool/.env
+Environment=BDAG_NODE_SERVICES=node
+Environment=BDAG_STACK_SERVICES=postgres,node,pool
+Environment=BDAG_POOL_CONTAINER=pool
+Environment=BDAG_POOL_DB_CONTAINER=postgres
+Environment=BDAG_STATUS_SAMPLER_ENABLED=1
+Environment=BDAG_STATUS_SAMPLER_INTERVAL_SECONDS=10
+Environment=BDAG_STATUS_SAMPLER_MAX_AGE_SECONDS=120
+Environment=BDAG_STATUS_PAYLOAD_STALE_AFTER_SECONDS=120
+EnvironmentFile=-/home/jeremy/blockdag-asic-pool/ops/runtime/ops.env
+Nice=12
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUWeight=30
+IOWeight=25
+ExecStart=/usr/bin/python3 /home/jeremy/blockdag-asic-pool/ops/status_sampler.py --loop
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
