@@ -1,0 +1,23 @@
+[Unit]
+Description=DagTech Pool Credit Rebalancer (fixes asic-pool inverse-difficulty bug)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+Restart=on-failure
+RestartSec=10
+EnvironmentFile=/etc/dagtech-credit-rebalancer.env
+ExecStartPre=-/usr/bin/docker stop dagtech-credit-rebalancer
+ExecStartPre=-/usr/bin/docker rm dagtech-credit-rebalancer
+ExecStart=/usr/bin/docker run --rm --name dagtech-credit-rebalancer \
+  --network ${POOL_NETWORK} \
+  -e PG_URL=${PG_URL} \
+  -e REBALANCE_INTERVAL_SECONDS=${REBALANCE_INTERVAL_SECONDS:-30} \
+  -e LOG_LEVEL=${LOG_LEVEL:-INFO} \
+  dagtech/credit-rebalancer:0.1.0 \
+  python /app/rebalancer.py --since-minutes 360
+ExecStop=/usr/bin/docker stop dagtech-credit-rebalancer
+
+[Install]
+WantedBy=multi-user.target
